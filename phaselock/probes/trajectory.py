@@ -137,8 +137,32 @@ class StatisticRow:
     alignment: Optional[float] = None
     erosion: Optional[float] = None
 
+    @staticmethod
+    def fieldnames() -> list[str]:
+        """The full CSV schema, fixed regardless of which fields a given row populated.
+
+        Deriving the header from whichever row happened to come first would produce a
+        different schema per batch: the last recorded step has no drift (there is no
+        later step to difference against), and only the latent carries alignment and
+        erosion. Appending under a shifting header silently corrupts the file, and a row
+        carrying a key the header lacks makes ``DictWriter`` raise mid-run.
+        """
+        from ..metrics.geophys import STATISTICS
+
+        return (
+            ["sample_id", "label", "group", "scenario", "violation", "source", "block", "step", "tau"]
+            + [f"phi_{name}" for name in STATISTICS]
+            + [f"drift_{name}" for name in STATISTICS]
+            + ["drift_estimator", "alignment", "erosion"]
+        )
+
     def flatten(self) -> dict[str, Any]:
-        """Flat dict suitable for a CSV row."""
+        """Flat CSV row carrying every column in :meth:`fieldnames`.
+
+        Absent values are written as empty rather than omitted.
+        """
+        from ..metrics.geophys import STATISTICS
+
         row: dict[str, Any] = {
             "sample_id": self.sample_id,
             "label": self.label,
@@ -149,13 +173,11 @@ class StatisticRow:
             "block": self.block,
             "step": self.step,
             "tau": self.tau,
+            "drift_estimator": self.drift_estimator if self.drift_estimator is not None else "",
+            "alignment": self.alignment if self.alignment is not None else "",
+            "erosion": self.erosion if self.erosion is not None else "",
         }
-        row.update({f"phi_{name}": value for name, value in self.statistics.items()})
-        if self.drift is not None:
-            row.update({f"drift_{name}": value for name, value in self.drift.items()})
-            row["drift_estimator"] = self.drift_estimator
-        if self.alignment is not None:
-            row["alignment"] = self.alignment
-        if self.erosion is not None:
-            row["erosion"] = self.erosion
+        for name in STATISTICS:
+            row[f"phi_{name}"] = self.statistics.get(name, "")
+            row[f"drift_{name}"] = "" if self.drift is None else self.drift.get(name, "")
         return row

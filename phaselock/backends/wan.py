@@ -125,12 +125,12 @@ class WanBackend(VideoBackend):
 
     def _vae_encode(self, video: torch.Tensor) -> torch.Tensor:
         vae = self.pipe.vae
-        posterior = vae.encode(video.to(vae.dtype, device=vae.device)).latent_dist
+        posterior = vae.encode(self._to_vae(video, vae)).latent_dist
         return posterior.mode()  # already (B, C, T, h, w) == BCTHW
 
     def _vae_decode(self, latents: torch.Tensor) -> torch.Tensor:
         vae = self.pipe.vae
-        return vae.decode(latents.to(vae.dtype, device=vae.device)).sample
+        return vae.decode(self._to_vae(latents, vae)).sample
 
     # -- denoiser ----------------------------------------------------------
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -212,19 +213,21 @@ def unique_samples(pairs: Sequence[VideoPair]) -> list[tuple[VideoSample, VideoP
 
 
 def write_rows(rows: Iterable[StatisticRow], path: Path) -> int:
-    """Append statistics rows to a CSV, writing the header on first use."""
+    """Append statistics rows to a CSV under a fixed schema.
+
+    The header comes from :meth:`StatisticRow.fieldnames`, not from the first row, so
+    that appends from separate batches stay consistent even when some rows have no drift.
+    """
     rows = list(rows)
     if not rows:
         return 0
-    flattened = [row.flatten() for row in rows]
-    fieldnames = list(flattened[0])
     exists = path.exists()
     with open(path, "a", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=StatisticRow.fieldnames())
         if not exists:
             writer.writeheader()
-        writer.writerows(flattened)
-    return len(flattened)
+        writer.writerows(row.flatten() for row in rows)
+    return len(rows)
 
 
 def score_signals(
@@ -255,22 +258,40 @@ def score_signals(
 
         for kind in ("phi", "drift"):
             for name in STATISTICS:
-                column = f"{'phi' if kind == 'phi' else 'drift'}_{name}"
-                if column not in next(iter(by_sample.values())):
-                    continue
-                try:
-                    plausible = [float(by_sample[p.plausible.sample_id][column]) for p in usable]
-                    violated = [float(by_sample[p.violated.sample_id][column]) for p in usable]
-                except (KeyError, TypeError, ValueError):
+                column = f"{kind}_{name}"
+                # Drop only the pairs with a missing value, not the whole signal: the
+                # last recorded step legitimately has no drift, and the latent carries
+                # alignment where other sources do not.
+                complete = [
+                    (
+                        _maybe_float(by_sample[pair.plausible.sample_id].get(column)),
+                        _maybe_float(by_sample[pair.violated.sample_id].get(column)),
+                        pair.scenario,
+                    )
+                    for pair in usable
+                ]
+                complete = [entry for entry in complete if entry[0] is not None and entry[1] is not None]
+                if len(complete) < 2:
                     continue
 
                 results[SignalKey(source, block, step, name, kind)] = evaluate_pairs(
-                    plausible,
-                    violated,
-                    groups=[pair.scenario for pair in usable],
+                    [entry[0] for entry in complete],
+                    [entry[1] for entry in complete],
+                    groups=[entry[2] for entry in complete],
                     resamples=resamples,
                 )
     return results
+
+
+def _maybe_float(value: Any) -> Optional[float]:
+    """Parse a CSV cell, treating blanks and non-finite values as absent."""
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def best_signals(

@@ -217,6 +217,16 @@ class VideoBackend(ABC):
 
     # -- VAE ---------------------------------------------------------------
 
+    def _to_vae(self, tensor: torch.Tensor, vae: Any) -> torch.Tensor:
+        """Move a tensor to the VAE's dtype on the pipeline's execution device.
+
+        Two traps. ``Tensor.to(dtype, device=...)`` is not a valid overload -- device must
+        come first or both must be keywords. And under ``enable_model_cpu_offload`` the
+        module's own ``.device`` reads ``cpu`` while accelerate's hooks execute it on the
+        GPU, so following ``vae.device`` would hand it a CPU tensor and fail.
+        """
+        return tensor.to(device=self.device, dtype=vae.dtype)
+
     @abstractmethod
     def _vae_encode(self, video: torch.Tensor) -> torch.Tensor:
         """Encode a ``(1, C, F, H, W)`` video in [-1, 1] to raw latents in the spec's layout."""

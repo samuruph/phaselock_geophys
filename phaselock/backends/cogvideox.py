@@ -75,14 +75,14 @@ class CogVideoXBackend(VideoBackend):
 
     def _vae_encode(self, video: torch.Tensor) -> torch.Tensor:
         vae = self.pipe.vae
-        posterior = vae.encode(video.to(vae.dtype, device=vae.device)).latent_dist
+        posterior = vae.encode(self._to_vae(video, vae)).latent_dist
         latents = posterior.mode()
         return latents.permute(0, 2, 1, 3, 4)  # (B, C, T, h, w) -> BTCHW
 
     def _vae_decode(self, latents: torch.Tensor) -> torch.Tensor:
         vae = self.pipe.vae
         latents = latents.permute(0, 2, 1, 3, 4)  # BTCHW -> (B, C, T, h, w)
-        return vae.decode(latents.to(vae.dtype, device=vae.device)).sample
+        return vae.decode(self._to_vae(latents, vae)).sample
 
     # -- denoiser ----------------------------------------------------------
 
