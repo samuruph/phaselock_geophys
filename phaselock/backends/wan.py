@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 import torch
 
-from .base import DenoiserState, LatentSpec, VideoBackend, to_canonical
+from .base import CFG_SEQUENTIAL, DenoiserState, LatentSpec, VideoBackend, to_canonical
 
 # Verified against vae/config.json of both Wan2.1-T2V-1.3B-Diffusers and
 # Wan2.1-T2V-14B-Diffusers, which carry identical constants.
@@ -118,6 +118,11 @@ class WanBackend(VideoBackend):
     @property
     def blocks(self) -> torch.nn.ModuleList:
         return self.pipe.transformer.blocks
+
+    @property
+    def cfg_style(self) -> str:
+        # Two calls per step: the conditional prediction first, then the unconditional.
+        return CFG_SEQUENTIAL
 
     @staticmethod
     def block_hidden_states(block_output: Any) -> torch.Tensor:

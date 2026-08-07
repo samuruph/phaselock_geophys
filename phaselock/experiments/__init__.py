@@ -22,14 +22,27 @@ from .detection import (
     write_rows,
 )
 from .external import ExternalRow, encode_sample, score_external
+from .generation import Candidate, best_of_n, frames_to_tensor, generate_candidate, reference_continuation
+from .step_sweep import DEFAULT_BLUR, DEFAULT_STEPS, SweepCell, blur_survival, measure_cell, ordering_by_steps
 
 __all__ = [
+    "Candidate",
+    "DEFAULT_BLUR",
+    "DEFAULT_STEPS",
     "ExternalRow",
     "SignalKey",
+    "SweepCell",
+    "best_of_n",
     "best_signals",
+    "blur_survival",
     "encode_sample",
     "ensemble_over_statistics",
     "extract_sample",
+    "frames_to_tensor",
+    "generate_candidate",
+    "measure_cell",
+    "ordering_by_steps",
+    "reference_continuation",
     "score_external",
     "score_signals",
     "statistics_from_record",

@@ -21,6 +21,14 @@ import torch
 
 LAYOUTS = ("BTCHW", "BCTHW")
 
+CFG_BATCHED = "batched"
+"""One transformer call per step on a doubled batch, ordered (uncond, cond)."""
+
+CFG_SEQUENTIAL = "sequential"
+"""Two transformer calls per step, conditional first then unconditional."""
+
+CFG_STYLES = (CFG_BATCHED, CFG_SEQUENTIAL)
+
 
 @dataclass(frozen=True)
 class LatentSpec:
@@ -214,6 +222,65 @@ class VideoBackend(ABC):
     @property
     def num_train_timesteps(self) -> int:
         return int(self.pipe.scheduler.config.num_train_timesteps)
+
+    @property
+    @abstractmethod
+    def cfg_style(self) -> str:
+        """How this pipeline issues its classifier-free guidance calls.
+
+        Needed to reconstruct what actually drove the trajectory when probing a running
+        pipeline: a forward hook sees the raw calls, not the guided combination.
+        """
+
+    def combine_cfg(
+        self,
+        captures: Sequence[tuple[torch.Tensor, torch.Tensor]],
+        guidance_scale: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Reduce one step's transformer calls to the latents and the guided prediction.
+
+        Args:
+            captures: ``(input, output)`` pairs recorded by a forward hook on the
+                transformer, in call order.
+            guidance_scale: The scale the pipeline applied. 1.0 means no guidance.
+
+        Returns:
+            ``(latents, model_output)`` in canonical ``(T, C, H, W)`` form. The latents
+            are sliced back to ``spec.channels``, dropping any conditioning channels an
+            image-to-video pipeline concatenated on.
+        """
+        if not captures:
+            raise ValueError("no transformer calls were captured for this step")
+
+        def video_latents(tensor: torch.Tensor) -> torch.Tensor:
+            return to_canonical(tensor[:1], self.spec)[:, : self.spec.channels]
+
+        if self.cfg_style == CFG_BATCHED:
+            if len(captures) != 1:
+                raise ValueError(
+                    f"{self.spec.name} issues one batched call per step, got {len(captures)}"
+                )
+            inputs, outputs = captures[0]
+            latents = video_latents(inputs)
+            if outputs.shape[0] == 1:
+                return latents, to_canonical(outputs, self.spec)
+            if outputs.shape[0] != 2:
+                raise ValueError(f"expected a batch of 1 or 2 under CFG, got {outputs.shape[0]}")
+            uncond, cond = outputs.chunk(2)
+            guided = uncond + guidance_scale * (cond - uncond)
+            return latents, to_canonical(guided, self.spec)
+
+        if len(captures) == 1:
+            inputs, outputs = captures[0]
+            return video_latents(inputs), to_canonical(outputs, self.spec)
+        if len(captures) != 2:
+            raise ValueError(
+                f"{self.spec.name} issues one or two calls per step, got {len(captures)}"
+            )
+        # Conditional first, unconditional second.
+        cond = to_canonical(captures[0][1], self.spec)
+        uncond = to_canonical(captures[1][1], self.spec)
+        return video_latents(captures[0][0]), uncond + guidance_scale * (cond - uncond)
 
     # -- VAE ---------------------------------------------------------------
 

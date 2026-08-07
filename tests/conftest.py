@@ -17,6 +17,8 @@ import pytest
 import torch
 
 from phaselock.backends.base import (
+    CFG_BATCHED,
+    CFG_SEQUENTIAL,
     DenoiserState,
     LatentSpec,
     VideoBackend,
@@ -82,17 +84,29 @@ class OracleBackend(VideoBackend):
     invert/resample round trip is the identity up to floating point.
     """
 
-    def __init__(self, spec: LatentSpec, target: torch.Tensor, num_blocks: int = 6, dim: int = 8):
+    def __init__(
+        self,
+        spec: LatentSpec,
+        target: torch.Tensor,
+        num_blocks: int = 6,
+        dim: int = 8,
+        cfg_style: str = CFG_SEQUENTIAL,
+    ):
         grid = (target.shape[0], target.shape[2] // spec.patch_size[1], target.shape[3] // spec.patch_size[2])
         super().__init__(_Pipe(_Transformer(num_blocks, dim, grid)), spec, device=torch.device("cpu"))
         self.target = target
         self.grid = grid
         self.dim = dim
         self.forward_calls = 0
+        self._cfg_style = cfg_style
 
     @property
     def blocks(self) -> torch.nn.ModuleList:
         return self.pipe.transformer.blocks
+
+    @property
+    def cfg_style(self) -> str:
+        return self._cfg_style
 
     @staticmethod
     def block_hidden_states(block_output: Any) -> torch.Tensor:

@@ -105,9 +105,22 @@ class ProbeRecorder:
             def hook(_module, _inputs, output):
                 if not self._armed:
                     return
+                key = (source, index)
+                # Under sequential CFG (Wan) the block runs twice per step, conditional
+                # first. Keep the first and ignore the unconditional pass.
+                if key in self._staged:
+                    return
+
+                hidden = extract(output).detach()
+                if hidden.shape[0] > 1:
+                    # Under batched CFG (CogVideoX) the batch is [uncond, cond]. There is
+                    # no principled way to "guide" a hidden state -- guidance combines
+                    # *predictions*, not activations -- so the conditional pass is
+                    # recorded, matching the sequential case above.
+                    hidden = hidden[hidden.shape[0] // 2 :]
+
                 # Pool immediately: the raw state is ~100 MB, the pooled one ~80 KB.
-                pooled = pool_tokens(extract(output).detach().float(), self.grid, self.pooling)
-                self._staged[(source, index)] = pooled.cpu()
+                self._staged[key] = pool_tokens(hidden.float(), self.grid, self.pooling).cpu()
 
             return hook
 

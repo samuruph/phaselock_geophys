@@ -105,9 +105,11 @@ phaselock/
   probes/       forward hooks, per-latent-frame pooling, trajectory storage
   encoders/     frozen DINOv2 -- the published GeoPhys path, kept as the yardstick
   metrics/      geophys, flow_geometry, spectral, motion_mask, scoring
-  experiments/  detection, external
-configs/experiments/    detection_likephys, detection_intphys2, step_sweep_likephys
-scripts/        run_detection, run_external, inference
+  experiments/  detection, external, generation, step_sweep
+configs/experiments/    pilot, detection_{likephys,intphys2},
+                        generation_likephys, step_sweep_likephys
+scripts/        run_detection, run_external, run_generation, run_step_sweep,
+                report, inference
 ```
 
 Everything internal works in a canonical `(T, C, H, W)` latent, so guidance, probing and
@@ -142,14 +144,24 @@ accuracies will not match published numbers even with a correct implementation.
 ## Running
 
 ```bash
-# Correctness gate FIRST. Must land near the published 77.6-80.8% single-backbone range,
-# or nothing measured on internal representations is interpretable.
+# 0. Smallest end-to-end check: 2 pairs, 20 steps. Minutes, not hours.
+python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml
+
+# 1. Correctness gate. Must land near the published 77.6-80.8% single-backbone range,
+#    or nothing measured on internal representations is interpretable.
 python scripts/run_external.py --config configs/experiments/detection_likephys.yaml
 
-# Stage 5: geometry on internal representations
+# 2. Detection: geometry on internal representations
 python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml
 python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
     data__limit=48 inversion__num_steps=100
+
+# 3. Read the results: per-source comparison and block x step heatmaps
+python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys --figures
+
+# 4. Generation on labelled simulated data, and the step sweep with blur control
+python scripts/run_generation.py --config configs/experiments/generation_likephys.yaml
+python scripts/run_step_sweep.py --config configs/experiments/step_sweep_likephys.yaml
 
 # Wan2.1 smoke test on local weights
 python scripts/inference.py --backend wan21_t2v_1_3b \
@@ -159,6 +171,14 @@ python scripts/inference.py --backend wan21_t2v_1_3b \
 Extraction is resumable — clips already in `statistics.csv` are skipped. Unknown config
 keys raise rather than falling back to a default, because a typo that silently reverts to
 a default produces a plausible result under settings nobody chose.
+
+## Status
+
+The library and all six drivers are implemented and covered by 246 CPU tests. **No GPU
+run has completed yet**, so there are no results: the smoke tests found and fixed two real
+bugs (a bad `Tensor.to` overload, and `vae.device` lying under CPU offload) but have not
+been run to completion. Nothing here should be treated as validated against a real model
+until `scripts/run_external.py` clears the correctness gate.
 
 ## What to watch for
 

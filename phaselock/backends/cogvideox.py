@@ -10,7 +10,14 @@ from typing import Any, Optional
 
 import torch
 
-from .base import DenoiserState, LatentSpec, VideoBackend, from_canonical, to_canonical
+from .base import (
+    CFG_BATCHED,
+    DenoiserState,
+    LatentSpec,
+    VideoBackend,
+    from_canonical,
+    to_canonical,
+)
 
 # CogVideoX-5B. patch_size is spatial-only in the 1.0 models, expressed here as the
 # equivalent 3-D patch so that per-latent-frame token pooling is uniform across backends.
@@ -64,6 +71,12 @@ class CogVideoXBackend(VideoBackend):
     @property
     def blocks(self) -> torch.nn.ModuleList:
         return self.pipe.transformer.transformer_blocks
+
+    @property
+    def cfg_style(self) -> str:
+        # One call per step on cat([latents]*2), with prompt_embeds ordered
+        # cat([negative, positive]), so chunk(2) yields (uncond, cond).
+        return CFG_BATCHED
 
     @staticmethod
     def block_hidden_states(block_output: Any) -> torch.Tensor:

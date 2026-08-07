@@ -1,0 +1,40 @@
+# Stage 6: baseline I2V continuation of LikePhys valid clips.
+#
+# Conditions on the first frame of a *valid* clip, so the real continuation is a
+# physically plausible reference and every generation is scored against ground truth.
+# Guidance is off -- PhaseLock is not the object of study.
+#
+# Start at limit=10 with num_candidates=1 to confirm the path, then raise
+# num_candidates to 4 for the best-of-N selection experiment.
+
+backend:
+  name: cogvideox_5b_i2v
+  dtype: bfloat16
+  offload: true
+
+data:
+  name: likephys
+  limit: 10
+  seed: 0
+
+generation:
+  num_steps: 50
+  guidance_scale: 6.0
+  num_candidates: 1           # >1 enables best-of-N selection
+  seed: 42
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 4
+  pooling: mean
+  record_steps: 10
+  save_trajectories: false
+
+metrics:
+  ar_order: 3
+  residual_fit: span
+  bootstrap_resamples: 1000
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: generation_likephys
