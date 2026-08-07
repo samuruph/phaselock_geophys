@@ -1,0 +1,34 @@
+# Smallest run that exercises the whole path end to end: 2 pairs, 20 inversion steps,
+# 5 recorded steps, every 8th block. Minutes rather than hours. Use it to confirm the
+# pipeline works before committing to a real run; the numbers it produces are not
+# meaningful at n=2.
+
+backend:
+  name: cogvideox_5b_t2v
+  dtype: bfloat16
+  offload: true
+
+data:
+  name: likephys
+  limit: 2
+  seed: 0
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 8
+  pooling: mean
+  record_steps: 5
+  save_trajectories: true
+
+inversion:
+  num_steps: 20
+  prompt: ""
+
+metrics:
+  ar_order: 3
+  residual_fit: span
+  bootstrap_resamples: 200
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: pilot_likephys
