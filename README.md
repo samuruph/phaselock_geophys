@@ -1,165 +1,180 @@
-# PhaseLock: Physics in 2-Steps
+# PhaseLock + GeoPhys: trajectory geometry in video diffusion internals
 
-**Locking Motion Priors Before Visual Refinement Erases Them**
+Two things live in this repository.
 
-WEBSITE: https://dnwjddl.github.io/phaselock/
+**PhaseLock** — the training-free method from *Physics in 2-Steps: Locking Motion Priors
+Before Visual Refinement Erases Them*, now backend-agnostic so it runs on Wan2.1 as well
+as CogVideoX.
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+**GeoPhys on internal representations** — the research question this repo exists to
+answer. [GeoPhys](context/GEOPHYS_The_Geometry_of_Physical_Plausibility.pdf) shows that
+physical plausibility is readable from five geometric statistics of a per-frame feature
+trajectory, using *frozen external image encoders*. [The Invisible Hand of
+Physics](<context/The Invisible Hand of Physics- When Video Diffusion Models Know More Than They Show.pdf>)
+shows that plausibility is linearly decodable from a video diffusion model's *own DiT
+hidden states*, and — crucially — that it is **absent from the VAE latent input**
+(48–53%, chance).
 
-## Overview
+So: **does GeoPhys geometry transfer to internal representations, and which one carries
+it?**
 
-PhaseLock is a **training-free** framework that significantly improves the physical consistency of video diffusion models. Our key insight: a 2-step generation often exhibits *better* physical consistency than a 50-step output from the same model.
+That question matters for PhaseLock directly. PhaseLock's latent delta
+`T(z) = z[2:F] − z[1:F−1]` **is** GeoPhys's first-order velocity `v_t = z̄_{t+1} − z̄_t`,
+computed in VAE latent space — the one space reported as physics-free. PhaseLock
+constrains the first-order term of a GeoPhys trajectory, never looks at curvature,
+acceleration or the prediction residual, and does so in a representation that may not
+carry the signal at all.
 
-### Key Findings
+> **Scope.** PhaseLock is not the object of study here. Every experiment runs on plain
+> baseline sampling with guidance off.
 
-- **Phase erosion**: Motion dynamics are 8.5x more sensitive to phase corruption than magnitude, yet the refinement process progressively destroys this critical component
-- **Motion priors in few-step inference**: Physical knowledge is captured in the first 2 steps but gets overwritten during visual refinement
-- **Latent Delta Guidance**: Constraining frame-to-frame latent differences implicitly locks phase evolution without explicit FFT operations
-
-### Results
-
-| Model | Baseline | + PhaseLock | Improvement |
-|-------|----------|-------------|-------------|
-| CogVideoX-5B | 30.82 | 36.0 | +5.2% |
-| LTX-Video | 31.50 | 37.1 | +5.6% |
-| WAN 2.1 | 29.20 | 37.0 | +7.8% |
-
-*Physics-IQ benchmark scores*
-
-### Efficiency
-
-- **Time overhead**: 1.06x (vs. 5x+ for reward-based methods)
-- **Memory overhead**: 1.02x
-- **No external models required**
-- **No gradient computation**
-
-## Installation
+## Install
 
 ```bash
-git clone https://github.com/dnwjddl/phaselock.git
-cd phaselock/code
 pip install -r requirements.txt
+python -m pytest tests/ -q          # 208 tests, CPU only, no weights needed
 ```
 
-## Quick Start
+## The five statistics
 
-### Python API
+On a pooled per-frame trajectory `Z = (z̄₁ … z̄_T) ∈ R^{T×D}`:
 
-```python
-from diffusers import CogVideoXImageToVideoPipeline
-from diffusers.utils import load_image
-from phaselock import PhaseLockPipeline
+```
+v_t = z̄_{t+1} − z̄_t          s_t = ‖v_t‖        θ_t = ∠(v_t, v_{t+1})
+a_t = z̄_{t+2} − 2z̄_{t+1} + z̄_t                  ε_t = z̄_{t+1} − ẑ_{t+1}
 
-# Load model with PhaseLock wrapper
-pipe = PhaseLockPipeline.from_pretrained(
-    "THUDM/CogVideoX-5B-I2V",
-    CogVideoXImageToVideoPipeline,
-    guidance_strength=0.05,  # lambda_0
-    few_steps=2,             # K_few
-    full_steps=50,           # K_full
-)
-
-# Generate video
-image = load_image("path/to/image.jpg")
-frames = pipe(
-    prompt="A ball rolling down a slope and bouncing",
-    image=image,
-    seed=42,
-)
-
-# Save result
-from diffusers.utils import export_to_video
-export_to_video(frames, "output.mp4", fps=8)
+φ_speed = std({s_t})     φ_curv = mean({θ_t})    φ_ang = std({θ_t})
+φ_accel = mean({‖a_t‖²})                          φ_perr = mean({‖ε_t‖})
 ```
 
-### Command Line
+Larger means less regular, hence less plausible. `s_t` and `θ_t` are per-frame
+intermediates, not statistics — the statistics are their temporal summaries.
+
+Two places the source material is unusable as literally written, both handled explicitly
+and documented at the call site:
+
+- **`φ_perr` is underdetermined.** Fitting `P_H : R^{H·D} → R^D` on one video's windows
+  is underdetermined whenever `H·D` exceeds the window count, which it always does here
+  (CogVideoX: 10 windows, 9216 unknowns), so the in-sample residual collapses to exactly
+  zero. The default follows the paper's own *geometric* reading instead — the component
+  of `z̄_{t+1}` orthogonal to the affine span of the previous `H` frames — which is
+  well-posed and training-free. `ridge` and `scalar` fits are available for comparison.
+  `H` is never stated in the paper; default 3.
+- **`arccos` is the wrong formula numerically.** It loses roughly half its precision near
+  0 and π, exactly where a near-straight trajectory sits, and its derivative diverges
+  there. A perfectly straight float32 trajectory returns ~2e-4 rather than 0. The
+  algebraically identical half-angle form is used instead, which matters because the
+  flow-coupling metrics differentiate these statistics.
+
+## Coupling the two velocities
+
+GeoPhys's velocity runs along the **frame** axis; a flow sampler's runs along the
+**denoising** axis. They are linked exactly, because the frame-difference operator `D`
+and spatial mean pooling are linear and so commute with the sampler ODE:
+
+```
+d(D z̄)/dτ  =  D (dz̄/dτ)  =  D ū_θ(z, τ)
+```
+
+*The flow velocity of the GeoPhys motion field is the GeoPhys motion field of the flow
+velocity.* From that follows the headline metric, **geometric drift**:
+
+```
+ġ_σ(τ) = ⟨ ∇_z̄ φ_σ(z̄(τ)), ū_θ(z, τ) ⟩
+```
+
+`ġ_σ < 0` means this denoising step is making the trajectory **more** geometrically
+regular; `ġ_σ > 0` means it is **eroding** it — PhaseLock's erosion thesis stated per
+step and generalised past the first-order term. The gradient goes through the statistic
+only, never the transformer, so it is nearly free.
+
+**One caveat, enforced in the schema.** The identity gives `dr/dτ = u` only when the
+recorded signal *is* the ODE state, i.e. the pooled VAE latent. `x0_hat` and `velocity`
+look like they should qualify but do not — both depend on the network's output, so their
+τ-derivative drags in a Jacobian that is never formed. Hidden states are further removed
+still. Those all fall back to a finite-difference estimator, tagged `empirical` so the
+two are never averaged together.
+
+## Layout
+
+```
+phaselock/
+  backends/     LatentSpec + VideoBackend; CogVideoX (BTCHW) and Wan2.1 (BCTHW)
+  datasets/     LikePhys, IntPhys2, Physics-IQ, and shared video preprocessing
+  pipelines/    inversion (real video -> latent trajectory), generation, phaselock
+  probes/       forward hooks, per-latent-frame pooling, trajectory storage
+  encoders/     frozen DINOv2 -- the published GeoPhys path, kept as the yardstick
+  metrics/      geophys, flow_geometry, spectral, motion_mask, scoring
+  experiments/  detection, external
+configs/experiments/    detection_likephys, detection_intphys2, step_sweep_likephys
+scripts/        run_detection, run_external, inference
+```
+
+Everything internal works in a canonical `(T, C, H, W)` latent, so guidance, probing and
+the metrics have one implementation each rather than one per backend.
+
+## Backends
+
+| name | layout | native | notes |
+|---|---|---|---|
+| `cogvideox_5b_t2v` | BTCHW | 49f @ 8fps, 480×720 | inversion default |
+| `cogvideox_5b_i2v` | BTCHW | 49f @ 8fps, 480×720 | generation default |
+| `wan21_t2v_1_3b` | BCTHW | 81f @ 16fps, 480×832 | validated |
+| `wan21_t2v_14b`, `wan21_i2v_14b_480p`, `wan21_i2v_14b_720p` | BCTHW | 81f @ 16fps | wired, **not validated** — will not fit a 46GB card |
+
+Wan support required fixing three CogVideoX-specific assumptions that all failed
+*silently*: the guidance unpacked `B,T,C,H,W` and would have differenced the channel
+axis; the encoder used `vae.config.scaling_factor`, which is `null` for
+`AutoencoderKLWan` (it normalises per-channel); and the VAE encode sampled the posterior,
+making the motion prior irreproducible between PhaseLock's two stages.
+
+## Datasets
+
+| dataset | pairs | clip | note |
+|---|---|---|---|
+| LikePhys | **800** | 60f @ 30fps, 512² | 12 scenarios × 10 subgroups; primary — 60→49 frames is nearly 1:1 |
+| IntPhys2 | **506** | 636f @ 60fps, 512² | secondary; 636→49 is a 13× decimation that can step over a violation |
+| Physics-IQ | 198 scenarios | 4K @ 30fps | generation benchmark, deferred |
+
+The local LikePhys release has 800 pairs where the paper cites 650, so absolute
+accuracies will not match published numbers even with a correct implementation.
+
+## Running
 
 ```bash
-# Image-to-Video generation
-python scripts/inference.py \
-    --prompt "A pendulum swinging back and forth" \
-    --image path/to/pendulum.jpg \
-    --output pendulum.mp4
+# Correctness gate FIRST. Must land near the published 77.6-80.8% single-backbone range,
+# or nothing measured on internal representations is interpretable.
+python scripts/run_external.py --config configs/experiments/detection_likephys.yaml
 
-# With custom parameters
-python scripts/inference.py \
-    --prompt "Water being poured into a glass" \
-    --image glass.jpg \
-    --output water.mp4 \
-    --guidance_strength 0.05 \
-    --few_steps 2 \
-    --full_steps 50
+# Stage 5: geometry on internal representations
+python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml
+python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
+    data__limit=48 inversion__num_steps=100
 
-# Baseline comparison (PhaseLock disabled)
-python scripts/inference.py \
-    --prompt "A ball bouncing" \
-    --image ball.jpg \
-    --output baseline.mp4 \
-    --no_phaselock
+# Wan2.1 smoke test on local weights
+python scripts/inference.py --backend wan21_t2v_1_3b \
+    --prompt "a ball bouncing on a table" --output /tmp/wan.mp4
 ```
 
-## Algorithm
+Extraction is resumable — clips already in `statistics.csv` are skipped. Unknown config
+keys raise rather than falling back to a default, because a typo that silently reverts to
+a default produces a plausible result under settings nobody chose.
 
-PhaseLock operates in two stages:
+## What to watch for
 
-### Stage 1: Motion Prior Extraction
-
-```
-z_few = Denoise(z_T, prompt, K_few=2)
-M_prior = z_few[2:F] - z_few[1:F-1]  # Latent Delta Operator
-```
-
-### Stage 2: Latent Delta Guidance
-
-```
-for k in range(K_full):
-    z = DenoisingStep(z, model, prompt)
-    
-    if k_start <= k < k_end:
-        M_current = z[2:F] - z[1:F-1]
-        G = M_prior - M_current
-        lambda_k = lambda_0 * (1 - (k - k_start) / (k_end - k_start))
-        z[2:F] += lambda_k * G
-```
-
-## Hyperparameters
-
-| Parameter | Symbol | Default | Description |
-|-----------|--------|---------|-------------|
-| `few_steps` | K_few | 2 | Steps for motion prior extraction |
-| `full_steps` | K_full | 50 | Steps for full generation |
-| `guidance_strength` | λ₀ | 0.05 | Initial guidance strength |
-| `guide_start` | k_start | 0 | Step to start guidance |
-| `guide_end` | k_end | K_full/2 | Step to end guidance |
-
-### Tuning Guidelines
-
-- **guidance_strength**: Start with 0.05. Increase for more physical consistency, decrease if artifacts appear
-- **few_steps**: Keep at 2 (optimal per ablation study)
-- **guide_end**: K_full/2 balances physics preservation with texture refinement
-
-## Project Structure
-
-```
-PhaseLock/
-├── phaselock/
-│   ├── __init__.py          # Package exports
-│   ├── guidance.py          # LatentDeltaGuidance implementation
-│   ├── pipeline.py          # PhaseLockPipeline wrapper
-│   └── utils.py             # Utility functions
-├── scripts/
-│   └── inference.py         # CLI inference script
-├── configs/
-│   └── default.yaml         # Default hyperparameters
-├── examples/                 # Example notebooks and scripts
-├── requirements.txt
-└── README.md
-```
+- **Inversion fidelity is the load-bearing assumption.** The Invisible Hand reports probe
+  accuracy collapsing from 0.82 to 0.57 when integration steps drop from 100 to 20, while
+  the reconstruction still *looks* fine. A good reconstruction is necessary and nowhere
+  near sufficient; sweep `inversion__num_steps`.
+- **The VAE-latent control is the interesting cell.** Geometry landing at chance there
+  while working on hidden states would be a clean positive result — and would say
+  PhaseLock guides in a physics-free representation.
+- **Blur is a confound in the step sweep.** A 2-step output is blurrier, so any feature
+  trajectory could look "more regular" purely from having less texture to move. The
+  σ ∈ {0, 8, 16} control is applied to *every* arm including the real reference, per
+  PhaseLock Fig. 3a. If the K=2 advantage vanishes under blur, the ordering is a
+  sharpness artefact and is not a physics result.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-This work builds upon the excellent [diffusers](https://github.com/huggingface/diffusers) library and [CogVideoX](https://github.com/THUDM/CogVideo) model.
+Apache 2.0. Builds on diffusers, CogVideoX and Wan2.1.

@@ -1,0 +1,40 @@
+# Stage 7: does trajectory geometry reproduce the few-step effect, and does the
+# ordering survive the blur control?
+#
+# PhaseLock reports Physics-IQ 34.02 at K=2 falling to 30.82 at K=50, while LPIPS
+# improves 0.23 -> 0.19. The confound is that a 2-step output is simply blurrier, so
+# any feature trajectory could look "more regular" from having less texture to move.
+# Blur is applied to EVERY arm including the real reference, per the paper's Fig. 3a.
+
+backend:
+  name: cogvideox_5b_i2v
+  dtype: bfloat16
+  offload: true
+
+data:
+  name: likephys
+  limit: 30
+  seed: 0
+
+generation:
+  step_sweep: [2, 10, 30, 50]
+  blur_sweep: [0.0, 8.0, 16.0]
+  guidance_scale: 6.0
+  num_candidates: 1
+  seed: 42
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 4             # internal arm re-runs per sigma, so keep it lighter
+  pooling: mean
+  record_steps: 10
+  save_trajectories: false
+
+metrics:
+  ar_order: 3
+  residual_fit: span
+  bootstrap_resamples: 1000
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: step_sweep_likephys

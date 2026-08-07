@@ -14,12 +14,25 @@ Command-line overrides use ``section__key=value``::
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
+import typing
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence, get_args, get_origin
 
 import yaml
+
+
+@functools.lru_cache(maxsize=None)
+def _hints(cls: type) -> dict[str, Any]:
+    """Resolved type hints for a dataclass.
+
+    ``from __future__ import annotations`` turns every annotation into a string, so
+    ``dataclasses.fields(cls)[i].type`` is ``"BackendConfig"`` rather than the class.
+    Resolving them is what lets nested sections be built and string overrides be coerced.
+    """
+    return typing.get_type_hints(cls)
 
 
 @dataclass(frozen=True)
@@ -173,8 +186,9 @@ def _as_list(value: Any) -> Any:
 
 def _build(cls: type, values: dict[str, Any], path: str = "") -> Any:
     """Instantiate a dataclass from a mapping, rejecting keys it does not declare."""
-    declared = {f.name: f for f in fields(cls)}
-    unknown = set(values) - set(declared)
+    hints = _hints(cls)
+    declared = {f.name for f in fields(cls)}
+    unknown = set(values) - declared
     if unknown:
         where = f" in section {path!r}" if path else ""
         raise ValueError(
@@ -184,17 +198,21 @@ def _build(cls: type, values: dict[str, Any], path: str = "") -> Any:
 
     kwargs: dict[str, Any] = {}
     for name, value in values.items():
-        annotation = declared[name].type
+        annotation = hints[name]
         if is_dataclass(annotation) and isinstance(value, dict):
             kwargs[name] = _build(annotation, value, path=name)
             continue
-        if get_origin(annotation) in (list, Sequence) or (
-            get_origin(annotation) is not None
-            and any(get_origin(a) is list for a in get_args(annotation))
-        ):
+        if _is_list_type(annotation):
             value = _as_list(value)
         kwargs[name] = value
     return cls(**kwargs)
+
+
+def _is_list_type(annotation: Any) -> bool:
+    """True for ``list[X]`` and ``Optional[list[X]]``."""
+    if get_origin(annotation) in (list, Sequence):
+        return True
+    return any(get_origin(arg) in (list, Sequence) for arg in get_args(annotation))
 
 
 def load(path: Optional[str | Path] = None, **overrides: Any) -> Config:
@@ -211,7 +229,7 @@ def load(path: Optional[str | Path] = None, **overrides: Any) -> Config:
                 raise ValueError(f"{path}: expected a mapping at the top level")
             raw = loaded
 
-    sections = {f.name: f.type for f in fields(Config)}
+    sections = _hints(Config)
     for key, value in overrides.items():
         if value is None:
             continue
@@ -223,12 +241,12 @@ def load(path: Optional[str | Path] = None, **overrides: Any) -> Config:
         if section not in sections:
             raise ValueError(f"unknown config section {section!r}; valid: {sorted(sections)}")
 
-        declared = {f.name: f for f in fields(sections[section])}
+        declared = _hints(sections[section])
         if leaf not in declared:
             raise ValueError(
                 f"unknown key {leaf!r} in section {section!r}; valid: {sorted(declared)}"
             )
-        raw.setdefault(section, {})[leaf] = _coerce(value, declared[leaf].type)
+        raw.setdefault(section, {})[leaf] = _coerce(value, declared[leaf])
 
     return _build(Config, raw)
 

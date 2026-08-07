@@ -23,11 +23,15 @@ class Source:
 
     name: str
     per_block: bool
-    ode_state: bool
-    """True if the signal is an affine function of the ODE state.
+    exact_drift: bool
+    """True only if the signal *is* the ODE state, so that ``dr/dtau`` is the drift.
 
-    Determines whether :mod:`phaselock.metrics.flow_geometry` can compute geometric
-    drift exactly or has to fall back to finite differences across recorded steps.
+    Exact geometric drift is ``<grad phi(r), dr/dtau>``. The commutation identity gives
+    ``dr/dtau = u`` only when ``r`` is the pooled latent itself. Every other signal --
+    including ``x0_hat`` and ``velocity``, which look like they should qualify -- is a
+    function of the *network output* as well as the state, so its time derivative carries
+    a Jacobian of the transformer that we never compute. Those fall back to finite
+    differences across recorded steps.
     """
 
     description: str
@@ -37,7 +41,7 @@ SOURCES: dict[str, Source] = {
     HIDDEN_STATES: Source(
         name=HIDDEN_STATES,
         per_block=True,
-        ode_state=False,
+        exact_drift=False,
         description=(
             "Output of each DiT block, spatially mean-pooled within each latent frame. "
             "The signal 'The Invisible Hand of Physics' found most linearly decodable, "
@@ -47,7 +51,7 @@ SOURCES: dict[str, Source] = {
     LATENT: Source(
         name=LATENT,
         per_block=False,
-        ode_state=True,
+        exact_drift=True,
         description=(
             "The VAE latent x_t itself. The paper's negative control: linear probes on "
             "it sit at chance (48-53%). It is also the space PhaseLock's latent delta "
@@ -57,7 +61,7 @@ SOURCES: dict[str, Source] = {
     X0_HAT: Source(
         name=X0_HAT,
         per_block=False,
-        ode_state=True,
+        exact_drift=False,
         description=(
             "The denoiser's running estimate of the clean latent. Free at every step, "
             "and closer to the eventual video than x_t at high noise levels."
@@ -66,7 +70,7 @@ SOURCES: dict[str, Source] = {
     VELOCITY: Source(
         name=VELOCITY,
         per_block=False,
-        ode_state=True,
+        exact_drift=False,
         description=(
             "The probability-flow drift dz/dtau. Also the input to the flow-coupling "
             "metrics, where it plays the role of u in <grad phi, u>."
@@ -75,7 +79,7 @@ SOURCES: dict[str, Source] = {
     ATTENTION: Source(
         name=ATTENTION,
         per_block=True,
-        ode_state=False,
+        exact_drift=False,
         description=(
             "Output of each block's self-attention sublayer, pooled per latent frame. "
             "Note this is the attention *output*, not the attention matrix: at native "
@@ -88,7 +92,7 @@ SOURCES: dict[str, Source] = {
 }
 
 PER_BLOCK_SOURCES = frozenset(name for name, source in SOURCES.items() if source.per_block)
-ODE_STATE_SOURCES = frozenset(name for name, source in SOURCES.items() if source.ode_state)
+EXACT_DRIFT_SOURCES = frozenset(name for name, source in SOURCES.items() if source.exact_drift)
 
 
 def validate_sources(sources: Sequence[str]) -> list[str]:
@@ -108,9 +112,10 @@ def validate_sources(sources: Sequence[str]) -> list[str]:
 def supports_exact_drift(source: str) -> bool:
     """Whether geometric drift can be computed analytically for this source.
 
-    False for hidden states and attention outputs, which are nonlinear functions of the
-    ODE state and have no analytic ``d/dtau``.
+    True only for the latent, which is the ODE state itself. Everything else depends on
+    the transformer's output as well as the state, so its ``d/dtau`` would need a
+    Jacobian we never form; those use the finite-difference estimator instead.
     """
     if source not in SOURCES:
         raise ValueError(f"unknown probe source {source!r}; available: {sorted(SOURCES)}")
-    return SOURCES[source].ode_state
+    return SOURCES[source].exact_drift

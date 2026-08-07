@@ -65,14 +65,23 @@ def test_pool_latents_averages_over_space_only():
 
 
 def test_pooling_is_linear_which_the_flow_metrics_depend_on():
-    """Exact geometric drift needs pooling to commute with the ODE, i.e. be linear."""
-    a, b = torch.randn(5, 4, 6, 6), torch.randn(5, 4, 6, 6)
+    """Exact geometric drift needs pooling to commute with the ODE, i.e. be linear.
+
+    Run in float64: linearity is an algebraic property, and checking it in float32 would
+    be testing the associativity of floating-point summation instead.
+    """
+    generator = torch.Generator().manual_seed(0)
+
+    def randn(*shape):
+        return torch.randn(*shape, generator=generator, dtype=torch.float64)
+
+    a, b = randn(5, 4, 6, 6), randn(5, 4, 6, 6)
     assert torch.allclose(pool_latents(a + 2.5 * b), pool_latents(a) + 2.5 * pool_latents(b))
 
-    ta, tb = torch.randn(1, 60, 8), torch.randn(1, 60, 8)
     grid = (5, 3, 4)
+    ta, tb = randn(1, 60, 8), randn(1, 60, 8)
     assert torch.allclose(
-        pool_tokens(ta + 2.5 * tb, grid), pool_tokens(ta, grid) + 2.5 * pool_tokens(tb, grid), atol=1e-6
+        pool_tokens(ta + 2.5 * tb, grid), pool_tokens(ta, grid) + 2.5 * pool_tokens(tb, grid)
     )
 
 
@@ -91,11 +100,17 @@ def test_resolve_blocks_always_includes_the_last_block():
 # -- source registry --------------------------------------------------------
 
 
-def test_source_registry_marks_which_sources_support_exact_drift():
-    """Hidden states are not ODE states, so their drift can only be a secant."""
+def test_only_the_latent_supports_exact_drift():
+    """Exact drift needs dr/dtau = u, which holds only when r is the ODE state itself.
+
+    ``x0_hat`` and ``velocity`` look like they should qualify, but both are functions of
+    the network's output as well as the state, so differentiating them in tau drags in a
+    Jacobian of the transformer that is never formed. Hidden states are further removed
+    still. Everything but the latent falls back to the finite-difference estimator.
+    """
     assert supports_exact_drift(LATENT)
-    assert supports_exact_drift(X0_HAT)
-    assert supports_exact_drift(VELOCITY)
+    assert not supports_exact_drift(X0_HAT)
+    assert not supports_exact_drift(VELOCITY)
     assert not supports_exact_drift(HIDDEN_STATES)
     assert not supports_exact_drift("attention")
 

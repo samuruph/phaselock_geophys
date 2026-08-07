@@ -1,0 +1,335 @@
+"""Stage 5: does GeoPhys geometry separate plausible from violated video?
+
+For every clip in a matched pair: decode, resample, letterbox, VAE-encode, invert the
+sampler while recording internal states, pool, and compute the five geometric statistics
+plus the flow-coupling metrics for every ``(source, block, step)``.
+
+Then score. The result is a table of pairwise accuracies indexed by
+``(source, block, step, statistic)``, which is what answers the project's question: not
+"does geometry work" but *which internal representation* it works on, and where in depth
+and denoising time.
+
+Two reference points frame every internal number:
+
+* the **DINOv2 external baseline**, which validates the statistics against the paper's
+  published 78-81% on LikePhys;
+* the **VAE latent control**, where "The Invisible Hand of Physics" reports linear probes
+  at chance. Geometry landing at chance there while working on hidden states would be a
+  clean positive result, and would say PhaseLock guides in a physics-free space.
+"""
+
+from __future__ import annotations
+
+import csv
+import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Optional, Sequence
+
+import torch
+
+from ..backends.base import VideoBackend
+from ..config import Config
+from ..datasets import VideoPair, VideoSample, load_video
+from ..metrics.flow_geometry import (
+    DriftEstimator,
+    erosion_rate,
+    geometric_drift,
+    geometric_drift_empirical,
+    transport_alignment,
+)
+from ..metrics.geophys import STATISTICS, geophys_statistics
+from ..metrics.scoring import (
+    PairwiseResult,
+    evaluate_deltas,
+    evaluate_pairs,
+    or_ensemble,
+    scale_normalize,
+)
+from ..pipelines.inversion import invert
+from ..probes import LATENT, VELOCITY, ProbeRecord, StatisticRow, supports_exact_drift
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SignalKey:
+    """Identifies one scalar signal that can be scored as a detector."""
+
+    source: str
+    block: int
+    step: int
+    statistic: str
+    kind: str = "phi"
+    """``"phi"`` for the statistic itself, ``"drift"`` for its rate of change."""
+
+    def label(self) -> str:
+        block = "" if self.block < 0 else f"/b{self.block}"
+        return f"{self.source}{block}/s{self.step}/{self.kind}_{self.statistic}"
+
+
+def statistics_from_record(
+    record: ProbeRecord,
+    sample: VideoSample,
+    pair: VideoPair,
+    order: int = 3,
+    fit: str = "span",
+) -> list[StatisticRow]:
+    """Turn one video's probe record into statistics rows.
+
+    Exact flow coupling is computed only for the latent, which is the ODE state; every
+    other source gets the finite-difference estimator across consecutive recorded steps,
+    tagged so the two are never aggregated together.
+    """
+    rows: list[StatisticRow] = []
+    steps = record.steps
+
+    for source in record.sources:
+        for block in record.blocks(source):
+            for position, step in enumerate(steps):
+                key = (source, step, block)
+                try:
+                    trajectory = record.get(*key)
+                except KeyError:
+                    continue
+
+                stats = {
+                    name: float(value)
+                    for name, value in geophys_statistics(
+                        trajectory, order=order, fit=fit
+                    ).items()
+                }
+
+                drift: Optional[dict[str, float]] = None
+                estimator: Optional[str] = None
+                alignment: Optional[float] = None
+                erosion: Optional[float] = None
+
+                if supports_exact_drift(source) and VELOCITY in record.sources:
+                    flow = record.get(VELOCITY, step)
+                    drift = geometric_drift(trajectory, flow, order=order, fit=fit)
+                    estimator = DriftEstimator.EXACT.value
+                    alignment, _ = transport_alignment(trajectory, flow)
+                    erosion = erosion_rate(trajectory, flow)
+                elif position + 1 < len(steps):
+                    next_step = steps[position + 1]
+                    delta_tau = record.taus[next_step] - record.taus[step]
+                    if abs(delta_tau) > 1e-9:
+                        drift = geometric_drift_empirical(
+                            trajectory,
+                            record.get(source, next_step, block),
+                            delta_tau,
+                            order=order,
+                            fit=fit,
+                        )
+                        estimator = DriftEstimator.EMPIRICAL.value
+
+                rows.append(
+                    StatisticRow(
+                        sample_id=sample.sample_id,
+                        label=sample.label,
+                        group=sample.group,
+                        scenario=pair.scenario,
+                        violation=pair.violation,
+                        source=source,
+                        block=block,
+                        step=step,
+                        tau=record.taus[step],
+                        statistics=stats,
+                        drift=drift,
+                        drift_estimator=estimator,
+                        alignment=alignment,
+                        erosion=erosion,
+                    )
+                )
+    return rows
+
+
+def extract_sample(
+    backend: VideoBackend,
+    sample: VideoSample,
+    pair: VideoPair,
+    config: Config,
+    trajectory_dir: Optional[Path] = None,
+) -> list[StatisticRow]:
+    """Invert one clip and reduce it to statistics rows."""
+    spec = backend.spec
+    frames = load_video(
+        sample.path,
+        num_frames=spec.default_num_frames,
+        height=spec.default_height,
+        width=spec.default_width,
+        window=config.data.window,
+        blur_sigma=config.data.blur_sigma,
+    )
+
+    sources = list(config.probe.sources)
+    # Exact flow coupling for the latent needs the drift recorded alongside it.
+    if LATENT in sources and VELOCITY not in sources:
+        sources.append(VELOCITY)
+
+    result = invert(
+        backend,
+        frames,
+        num_steps=config.inversion.num_steps,
+        record_steps=config.probe.record_steps,
+        sources=sources,
+        blocks=config.probe.blocks,
+        block_stride=config.probe.block_stride,
+        pooling=config.probe.pooling,
+        prompt=config.inversion.prompt,
+        provenance={
+            "sample_id": sample.sample_id,
+            "label": sample.label,
+            "scenario": pair.scenario,
+            "violation": pair.violation,
+            "dataset": sample.dataset,
+            "blur_sigma": config.data.blur_sigma,
+            "window": config.data.window,
+        },
+    )
+
+    if trajectory_dir is not None:
+        result.record.save(trajectory_dir / sample.sample_id.replace("/", "_"))
+
+    return statistics_from_record(
+        result.record, sample, pair, order=config.metrics.ar_order, fit=config.metrics.residual_fit
+    )
+
+
+def unique_samples(pairs: Sequence[VideoPair]) -> list[tuple[VideoSample, VideoPair]]:
+    """Every distinct clip exactly once, with a pair for its metadata.
+
+    LikePhys shares one valid clip across all violations of a subgroup -- 800 pairs cover
+    only 920 distinct videos. Inverting per pair would waste roughly 40% of the compute.
+    """
+    seen: dict[str, tuple[VideoSample, VideoPair]] = {}
+    for pair in pairs:
+        for sample in (pair.plausible, pair.violated):
+            seen.setdefault(sample.sample_id, (sample, pair))
+    return list(seen.values())
+
+
+def write_rows(rows: Iterable[StatisticRow], path: Path) -> int:
+    """Append statistics rows to a CSV, writing the header on first use."""
+    rows = list(rows)
+    if not rows:
+        return 0
+    flattened = [row.flatten() for row in rows]
+    fieldnames = list(flattened[0])
+    exists = path.exists()
+    with open(path, "a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if not exists:
+            writer.writeheader()
+        writer.writerows(flattened)
+    return len(flattened)
+
+
+def score_signals(
+    rows: Sequence[dict[str, Any]],
+    pairs: Sequence[VideoPair],
+    resamples: int = 1000,
+) -> dict[SignalKey, PairwiseResult]:
+    """Pairwise accuracy and AUC for every scalar signal in the table.
+
+    A signal is one ``(source, block, step, statistic)`` combination, scored by the
+    paper's rule: the pair member with the larger value is predicted violated.
+    """
+    indexed: dict[tuple, dict[str, dict[str, float]]] = defaultdict(dict)
+    for row in rows:
+        cell = (row["source"], int(row["block"]), int(row["step"]))
+        indexed[cell][row["sample_id"]] = row
+
+    results: dict[SignalKey, PairwiseResult] = {}
+    for cell, by_sample in indexed.items():
+        source, block, step = cell
+        usable = [
+            pair
+            for pair in pairs
+            if pair.plausible.sample_id in by_sample and pair.violated.sample_id in by_sample
+        ]
+        if not usable:
+            continue
+
+        for kind in ("phi", "drift"):
+            for name in STATISTICS:
+                column = f"{'phi' if kind == 'phi' else 'drift'}_{name}"
+                if column not in next(iter(by_sample.values())):
+                    continue
+                try:
+                    plausible = [float(by_sample[p.plausible.sample_id][column]) for p in usable]
+                    violated = [float(by_sample[p.violated.sample_id][column]) for p in usable]
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+                results[SignalKey(source, block, step, name, kind)] = evaluate_pairs(
+                    plausible,
+                    violated,
+                    groups=[pair.scenario for pair in usable],
+                    resamples=resamples,
+                )
+    return results
+
+
+def best_signals(
+    results: dict[SignalKey, PairwiseResult], top: int = 20
+) -> list[tuple[SignalKey, PairwiseResult]]:
+    """Signals ranked by pairwise accuracy."""
+    return sorted(results.items(), key=lambda item: item[1].accuracy, reverse=True)[:top]
+
+
+def summarise_by_source(
+    results: dict[SignalKey, PairwiseResult]
+) -> dict[str, tuple[SignalKey, PairwiseResult]]:
+    """The single best signal per source.
+
+    This is the comparison the project exists to make: which internal representation
+    carries the geometry.
+    """
+    best: dict[str, tuple[SignalKey, PairwiseResult]] = {}
+    for key, result in results.items():
+        current = best.get(key.source)
+        if current is None or result.accuracy > current[1].accuracy:
+            best[key.source] = (key, result)
+    return best
+
+
+def ensemble_over_statistics(
+    rows: Sequence[dict[str, Any]],
+    pairs: Sequence[VideoPair],
+    source: str,
+    block: int,
+    step: int,
+) -> Optional[PairwiseResult]:
+    """OR ensemble across the five statistics at one probe location.
+
+    The paper's OR rule -- defer to whichever signal is most confident -- carries its
+    headline numbers, on the grounds that different signals catch different violations.
+    """
+    by_sample = {
+        row["sample_id"]: row
+        for row in rows
+        if row["source"] == source and int(row["block"]) == block and int(row["step"]) == step
+    }
+    usable = [
+        pair
+        for pair in pairs
+        if pair.plausible.sample_id in by_sample and pair.violated.sample_id in by_sample
+    ]
+    if not usable:
+        return None
+
+    normalised: dict[str, Any] = {}
+    for name in STATISTICS:
+        column = f"phi_{name}"
+        deltas = [
+            float(by_sample[p.violated.sample_id][column])
+            - float(by_sample[p.plausible.sample_id][column])
+            for p in usable
+        ]
+        normalised[name] = scale_normalize(deltas)
+
+    # The ensemble output is already a per-pair signed delta, so it is scored directly.
+    return evaluate_deltas(or_ensemble(normalised), groups=[pair.scenario for pair in usable])

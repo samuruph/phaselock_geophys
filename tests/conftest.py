@@ -148,6 +148,17 @@ class OracleBackend(VideoBackend):
         return from_canonical(velocity, self.spec)
 
 
+@pytest.fixture(autouse=True)
+def _deterministic_rng():
+    """Seed the global RNG before every test.
+
+    Several tests use bare ``torch.randn``, whose values would otherwise depend on how
+    many tests ran before them -- so adding a test file elsewhere could flip an unrelated
+    tolerance check from passing to failing.
+    """
+    torch.manual_seed(0)
+
+
 @pytest.fixture
 def latent_spec() -> LatentSpec:
     return LatentSpec(

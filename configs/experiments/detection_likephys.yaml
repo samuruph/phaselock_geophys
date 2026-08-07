@@ -1,0 +1,37 @@
+# Stage 5: GeoPhys geometry on CogVideoX internals, LikePhys matched pairs.
+#
+# Start small. 24 pairs balanced across all 12 scenarios is ~2 h and enough to see
+# whether any source separates at all; scale up once the shape of the result is clear.
+
+backend:
+  name: cogvideox_5b_t2v      # T2V for inversion: no image conditioning to confound it
+  dtype: bfloat16
+  offload: true
+
+data:
+  name: likephys
+  limit: 24                   # balanced across scenarios, not the first 24
+  seed: 0
+  window: null                # LikePhys is 2 s; 60 -> 49 frames is nearly 1:1
+  blur_sigma: 0.0
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 1             # all 42 blocks; hooks are free, only storage grows
+  pooling: mean               # matches GeoPhys's spatial average pooling
+  record_steps: 10
+  save_trajectories: false    # ~33 MB/clip; enable for figures and probe baselines
+
+inversion:
+  num_steps: 50               # sweep {20, 50, 100}: the paper reports 20 collapses
+  prompt: ""                  # unconditional, CFG off, so no text confound
+  reconstruction_check: false
+
+metrics:
+  ar_order: 3                 # H is never stated in the paper; sweep {2, 3, 4}
+  residual_fit: span
+  bootstrap_resamples: 1000
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: detection_likephys

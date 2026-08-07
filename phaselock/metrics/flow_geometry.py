@@ -11,12 +11,14 @@ sampler ODE::
 That is: *the flow velocity of the GeoPhys motion field is the GeoPhys motion field of
 the flow velocity.* Everything in this module follows from that identity.
 
-The identity is exact whenever the trajectory is an affine function of the ODE state --
-true for the VAE latent, the clean-latent estimate ``x0_hat``, and the drift itself. It
-is **not** true for DiT hidden states, which are a nonlinear function of the state and
-have no ``dh/dtau``; there, :func:`geometric_drift_empirical` estimates the same
-quantity by finite differences across recorded steps. Results carry an
-:class:`DriftEstimator` tag so the two are never averaged together.
+The identity gives ``dr/dtau = u`` only when the recorded signal ``r`` **is** the ODE
+state, i.e. the pooled VAE latent. Everything else is a function of the network's output
+as well as the state -- this includes ``x0_hat`` and ``velocity``, which look like they
+should qualify but do not, since differentiating them in ``tau`` drags in a Jacobian of
+the transformer that we never form. DiT hidden states are further removed still. For all
+of those, :func:`geometric_drift_empirical` estimates the same quantity by finite
+differences across recorded steps. Results carry a :class:`DriftEstimator` tag so the two
+are never averaged together.
 """
 
 from __future__ import annotations

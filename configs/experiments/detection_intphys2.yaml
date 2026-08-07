@@ -1,0 +1,36 @@
+# Stage 5 on IntPhys2. Harder than LikePhys: clips are 636 frames at 60 fps, so the
+# resample to 49 frames is a 13x decimation that can step over a brief violation.
+# `window` narrows to the centre of the clip, trading coverage for temporal resolution.
+
+backend:
+  name: cogvideox_5b_t2v
+  dtype: bfloat16
+  offload: true
+
+data:
+  name: intphys2
+  split: Main
+  limit: 24
+  seed: 0
+  window: 0.5                 # centre 5.3 s; sweep {null, 0.5, 0.25}
+  blur_sigma: 0.0
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 1
+  pooling: mean
+  record_steps: 10
+  save_trajectories: false
+
+inversion:
+  num_steps: 50
+  prompt: ""
+
+metrics:
+  ar_order: 3
+  residual_fit: span
+  bootstrap_resamples: 1000
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: detection_intphys2

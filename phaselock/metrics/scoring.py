@@ -158,6 +158,25 @@ def bootstrap_ci(
     return float(np.quantile(draws, alpha)), float(np.quantile(draws, 1.0 - alpha))
 
 
+def evaluate_deltas(
+    deltas: Sequence[float],
+    groups: Optional[Sequence] = None,
+    resamples: int = 1000,
+    seed: int = 0,
+) -> PairwiseResult:
+    """Pairwise accuracy and CI from signed deltas alone.
+
+    For a score that is already a per-pair signed quantity -- an ensemble combination,
+    for instance -- there are no separate plausible and violated values to recover, so
+    AUC is undefined and reported as ``None``.
+    """
+    deltas = np.asarray(deltas, dtype=np.float64)
+    low, high = bootstrap_ci(deltas, groups=groups, resamples=resamples, seed=seed)
+    return PairwiseResult(
+        accuracy=pairwise_accuracy(deltas), ci_low=low, ci_high=high, n_pairs=len(deltas)
+    )
+
+
 def evaluate_pairs(
     plausible: Sequence[float],
     violated: Sequence[float],
