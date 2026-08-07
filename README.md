@@ -39,7 +39,7 @@ carry the signal at all.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 246 tests, CPU only, no weights needed
+python -m pytest tests/ -q          # 263 tests, CPU only, no weights needed
 ```
 
 ## The five statistics
@@ -187,7 +187,7 @@ Extraction is resumable — clips already in `statistics.csv` are skipped.
 
 ## Status
 
-The library and all six drivers are implemented and covered by 246 CPU tests. **No GPU
+The library and all six drivers are implemented and covered by 263 CPU tests. **No GPU
 run has completed yet**, so there are no results: the smoke tests found and fixed two real
 bugs (a bad `Tensor.to` overload, and `vae.device` lying under CPU offload) but have not
 been run to completion. Nothing here should be treated as validated against a real model

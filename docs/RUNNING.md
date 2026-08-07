@@ -3,7 +3,7 @@
 Operational guide: exact commands, what each stage does, what it reads and writes, and how
 to read the output. For *why* each quantity is measured, see [METHOD.md](METHOD.md).
 
-> **Status.** Every stage below is implemented and covered by 246 CPU tests, but **no GPU
+> **Status.** Every stage below is implemented and covered by 263 CPU tests, but **no GPU
 > run has completed yet**, so no timings here are measured — they are step-count
 > arithmetic, labelled as estimates. The pilot in Stage 0 exists to replace them with real
 > numbers on your box.
@@ -35,7 +35,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 246 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 263 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):

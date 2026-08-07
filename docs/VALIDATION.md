@@ -1,6 +1,6 @@
 # GPU bring-up and validation plan
 
-Everything in this repo is covered by 248 CPU tests, but **no line of GPU code has ever run
+Everything in this repo is covered by 263 CPU tests, but **no line of GPU code has ever run
 to completion**. This is the plan to change that: what to fix first, the order to bring
 things up, what each step must produce to count as passing, and what to do when it does not.
 
@@ -15,14 +15,14 @@ module on the GPU. Expect more of that class of bug below.
 
 ### 0.1 Wire up the ensembles *(done)*
 
-`ensemble_over_statistics`, `majority_ensemble` and `majority_vote_accuracy` are
-implemented and tested, but **no script reports them**. That is a real gap: OR
-(`argmax_b |z_b|`) is what carries GeoPhys's headline numbers — 98.3% on LikePhys against
-77.6–80.8% for the best single signal. Reporting only single signals would understate the
-method by ~18 points and make the comparison against the paper meaningless.
+`ensemble_over_statistics`, `majority_ensemble` and `majority_vote_accuracy` were
+implemented and tested, but **no script reported them** — a real gap, because OR
+(`argmax_b |z_b|`) is what carries GeoPhys's headline numbers: 98.3% on LikePhys against
+77.6–80.8% for the best single signal. Reporting only single signals would have understated
+the method by ~18 points and made the comparison against the paper meaningless.
 
-Done. `run_detection.py` now reports OR and Majority per `(source, block, step)` alongside
-the single-signal table, and both land in `signals.csv` with `statistic ∈ {or, majority}`.
+`run_detection.py` now reports OR and Majority per `(source, block, step)` alongside the
+single-signal table, and both land in `signals.csv` with `statistic ∈ {or, majority}`.
 
 Writing the test for it exposed a second bug: `scale_normalize` divided by the standard
 deviation, so a signal that ordered *every* pair by an identical margin -- the best
@@ -41,7 +41,8 @@ backend validates the loop structure; it cannot validate the diffusers contract.
 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
 ```
 
-The 4-hour `scripts/test_physics_iq.py` run must be gone. Do not start alongside it — the
+Any long-running PhaseLock job must be gone (the legacy `test_physics_iq` script was
+replaced by `datasets/physics_iq.py`, but an older copy may still be running). Do not start alongside it — the
 box has 61 GB RAM with ~26 GB free, and CogVideoX-5B with offload will contend for both
 GPU and host memory.
 
@@ -253,7 +254,7 @@ Nothing downstream of a failed gate is reportable.
 
 | gate | check | criterion |
 |---|---|---|
-| G1 | CPU tests | `python -m pytest tests/ -q` → 248 pass |
+| G1 | CPU tests | `python -m pytest tests/ -q` → all pass |
 | G2 | Wan layout | Rung 2 completes without a shape error |
 | G3 | inversion sanity | reconstruction PSNR is plausible, not near-zero |
 | G4 | **GeoPhys implementation** | DINOv2 on LikePhys in 70–88% |
