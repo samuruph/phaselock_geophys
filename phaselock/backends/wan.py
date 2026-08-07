@@ -107,6 +107,10 @@ class WanBackend(VideoBackend):
             pipe.scheduler.config.flow_shift = spec.flow_shift
         if enable_offload:
             pipe.enable_model_cpu_offload()
+        # Encoding a full clip at native resolution in one piece is the peak memory point
+        # of the whole pipeline, above the transformer itself.
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
         return cls(pipe, spec, mode=mode)
 
     # -- model structure ---------------------------------------------------
