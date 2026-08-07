@@ -27,6 +27,7 @@ from phaselock.datasets import get_paired_dataset
 from phaselock.experiments.detection import (
     extract_sample,
     reconstruction_check,
+    score_ensembles,
     score_signals,
     summarise_by_source,
     unique_samples,
@@ -87,7 +88,13 @@ def main() -> None:
         logger.error("no scorable signals; check that both members of each pair were extracted")
         return
 
-    report(results, args.top, output)
+    # OR and Majority across the five statistics. These carry GeoPhys's headline numbers
+    # (98.3% on LikePhys vs 77.6-80.8% for the best single signal), so reporting only
+    # single signals would understate the method by roughly 18 points.
+    ensembles = score_ensembles(rows, pairs)
+    logger.info("scored %d single signals and %d ensembles", len(results), len(ensembles))
+
+    report(results, ensembles, args.top, output)
 
 
 def extract(config, pairs, statistics_path, output) -> None:
@@ -127,8 +134,8 @@ def extract(config, pairs, statistics_path, output) -> None:
         logger.info("[%d/%d] %s -> %d rows", index, len(todo), sample.sample_id, written)
 
 
-def report(results, top: int, output: Path) -> None:
-    """Print the ranked signals and the per-source comparison, and save both."""
+def report(results, ensembles, top: int, output: Path) -> None:
+    """Print the ranked signals, the per-source comparison and the ensembles."""
     ranked = sorted(results.items(), key=lambda item: item[1].accuracy, reverse=True)
 
     print(f"\n{'signal':<52} {'pairwise acc':>26} {'AUC':>7}")
@@ -144,10 +151,28 @@ def report(results, top: int, output: Path) -> None:
     ):
         print(f"  {source:<16} {key.label():<44} {result}")
 
+    if ensembles:
+        print("\nEnsembles across the five statistics (GeoPhys's headline combination):")
+        print("-" * 88)
+        best_or = max(
+            (item for item in ensembles.items() if item[0].statistic == "or"),
+            key=lambda item: item[1].accuracy,
+            default=None,
+        )
+        best_majority = max(
+            (item for item in ensembles.items() if item[0].statistic == "majority"),
+            key=lambda item: item[1].accuracy,
+            default=None,
+        )
+        for label, best in (("OR", best_or), ("Majority", best_majority)):
+            if best is not None:
+                print(f"  {label:<10} {best[0].label():<44} {best[1]}")
+
+    combined = {**results, **ensembles}
     with open(output / "signals.csv", "w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(["source", "block", "step", "statistic", "kind", "accuracy", "ci_low", "ci_high", "auc", "n_pairs"])
-        for key, result in ranked:
+        for key, result in sorted(combined.items(), key=lambda i: i[1].accuracy, reverse=True):
             writer.writerow(
                 [key.source, key.block, key.step, key.statistic, key.kind,
                  f"{result.accuracy:.6f}", f"{result.ci_low:.6f}", f"{result.ci_high:.6f}",

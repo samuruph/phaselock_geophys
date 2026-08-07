@@ -250,3 +250,75 @@ def test_only_the_latent_carries_alignment_and_erosion():
     rows = {row.source: row for row in statistics_from_record(record, pair.violated, pair)}
     assert rows[LATENT].alignment is not None
     assert rows["hidden_states"].alignment is None
+
+
+# -- ensembles --------------------------------------------------------------
+
+
+def test_or_ensemble_beats_its_best_component_when_signals_are_complementary():
+    """The reason GeoPhys reports OR at 98.3% against ~80% for any single signal.
+
+    Here 'speed' orders the first half of the pairs correctly and 'curv' the second half.
+    Either alone is at chance; deferring to whichever is more confident gets both.
+    """
+    from phaselock.experiments.detection import ensemble_over_statistics
+
+    pairs = [make_pair(index) for index in range(8)]
+    rows = []
+    for index, pair in enumerate(pairs):
+        first_half = index < 4
+        good = {name: 1.0 for name in STATISTICS}
+        bad = {name: 1.0 for name in STATISTICS}
+        # A large, correctly-signed margin on whichever statistic "sees" this pair.
+        bad["speed"] = 5.0 if first_half else 0.9
+        bad["curv"] = 0.9 if first_half else 5.0
+
+        for sample, values in ((pair.plausible, good), (pair.violated, bad)):
+            row = make_row(sample.sample_id, sample.label, pair.scenario, 1.0)
+            rows.append(
+                StatisticRow(
+                    sample_id=row.sample_id, label=row.label, group=row.group,
+                    scenario=row.scenario, violation=row.violation, source=LATENT,
+                    block=NO_BLOCK, step=0, tau=0.5, statistics=values,
+                ).flatten()
+            )
+
+    ensembles = ensemble_over_statistics(rows, pairs, LATENT, NO_BLOCK, 0)
+    assert set(ensembles) == {"or", "majority"}
+    assert ensembles["or"].accuracy == pytest.approx(1.0)
+
+
+def test_score_ensembles_covers_every_probe_location():
+    from phaselock.experiments.detection import score_ensembles
+
+    pairs = [make_pair(index) for index in range(4)]
+    rows = []
+    for pair in pairs:
+        for sample, value in ((pair.plausible, 1.0), (pair.violated, 5.0)):
+            for source, block in ((LATENT, NO_BLOCK), ("hidden_states", 3)):
+                row = make_row(sample.sample_id, sample.label, pair.scenario, value)
+                rows.append(
+                    StatisticRow(
+                        sample_id=row.sample_id, label=row.label, group=row.group,
+                        scenario=row.scenario, violation=row.violation, source=source,
+                        block=block, step=0, tau=0.5,
+                        statistics={n: value for n in STATISTICS},
+                    ).flatten()
+                )
+
+    results = score_ensembles(rows, pairs)
+    assert {(k.source, k.statistic) for k in results} == {
+        (LATENT, "or"), (LATENT, "majority"), ("hidden_states", "or"), ("hidden_states", "majority")
+    }
+    assert all(result.accuracy == pytest.approx(1.0) for result in results.values())
+
+
+def test_ensembles_decline_a_location_with_too_few_pairs():
+    from phaselock.experiments.detection import ensemble_over_statistics
+
+    pairs = [make_pair(0)]
+    rows = [
+        make_row(pairs[0].plausible.sample_id, 0, "ball_drop", 1.0).flatten(),
+        make_row(pairs[0].violated.sample_id, 1, "ball_drop", 5.0).flatten(),
+    ]
+    assert ensemble_over_statistics(rows, pairs, LATENT, NO_BLOCK, 0) == {}

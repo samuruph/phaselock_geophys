@@ -59,8 +59,16 @@ def test_scale_normalize_preserves_sign_but_zscore_does_not():
 
 
 def test_normalisers_handle_a_constant_input_without_nans():
-    assert list(scale_normalize([2.0, 2.0, 2.0])) == [0.0, 0.0, 0.0]
+    """Zero variance must not produce NaNs, but the two normalisers differ on what to do.
+
+    A z-score of a constant is genuinely zero -- there is no deviation from the mean. A
+    *scale* normalisation of a constant should keep the sign, because a constant positive
+    delta means every pair was ordered correctly.
+    """
+    assert np.isfinite(scale_normalize([2.0, 2.0, 2.0])).all()
+    assert np.isfinite(zscore([2.0, 2.0, 2.0])).all()
     assert list(zscore([2.0, 2.0, 2.0])) == [0.0, 0.0, 0.0]
+    assert (scale_normalize([2.0, 2.0, 2.0]) > 0).all()
 
 
 def test_scale_normalize_is_scale_invariant():
@@ -191,3 +199,19 @@ def test_ensembles_reject_empty_input():
     for combine in (or_ensemble, majority_ensemble, majority_vote_accuracy):
         with pytest.raises(ValueError, match="no signals"):
             combine({})
+
+
+def test_a_perfectly_consistent_signal_is_not_normalised_away():
+    """Zero spread means every pair was ordered by the same margin -- the best possible
+    detector. Dividing by the standard deviation would zero it and discard the sign the
+    ensembles vote on."""
+    normalised = scale_normalize([4.0, 4.0, 4.0, 4.0])
+    assert (normalised > 0).all()
+    assert pairwise_accuracy(normalised) == pytest.approx(1.0)
+
+    inverted = scale_normalize([-4.0, -4.0, -4.0])
+    assert (inverted < 0).all()
+
+
+def test_scale_normalize_of_all_zeros_stays_zero():
+    assert list(scale_normalize([0.0, 0.0, 0.0])) == [0.0, 0.0, 0.0]

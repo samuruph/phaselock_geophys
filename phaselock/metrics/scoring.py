@@ -81,9 +81,16 @@ def scale_normalize(deltas: Sequence[float]) -> np.ndarray:
     """
     deltas = np.asarray(deltas, dtype=np.float64)
     spread = deltas.std()
-    if spread < 1e-12:
+    if spread > 1e-12:
+        return deltas / spread
+
+    # Zero spread means the signal ordered every pair by an identical margin -- the best
+    # possible detector, not a useless one. Dividing by the std would zero it out and
+    # throw away the sign the ensembles vote on, so fall back to the magnitude.
+    scale = np.abs(deltas).mean()
+    if scale < 1e-12:
         return np.zeros_like(deltas)
-    return deltas / spread
+    return deltas / scale
 
 
 def pairwise_accuracy(deltas: Sequence[float]) -> float:

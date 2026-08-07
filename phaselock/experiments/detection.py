@@ -45,6 +45,7 @@ from ..metrics.scoring import (
     PairwiseResult,
     evaluate_deltas,
     evaluate_pairs,
+    majority_ensemble,
     or_ensemble,
     scale_normalize,
 )
@@ -367,11 +368,16 @@ def ensemble_over_statistics(
     source: str,
     block: int,
     step: int,
-) -> Optional[PairwiseResult]:
-    """OR ensemble across the five statistics at one probe location.
+    kind: str = "phi",
+) -> dict[str, PairwiseResult]:
+    """Combine the five statistics at one probe location, by OR and by Majority.
 
-    The paper's OR rule -- defer to whichever signal is most confident -- carries its
-    headline numbers, on the grounds that different signals catch different violations.
+    These are the paper's headline numbers, not an afterthought: OR (defer to whichever
+    signal is most confident) reaches 98.3% on LikePhys against 77.6-80.8% for the best
+    single backbone, on the grounds that different signals catch different violations.
+    Reporting only single signals understates the method by roughly 18 points.
+
+    Returns an empty dict when the location has too few complete pairs to score.
     """
     by_sample = {
         row["sample_id"]: row
@@ -383,18 +389,45 @@ def ensemble_over_statistics(
         for pair in pairs
         if pair.plausible.sample_id in by_sample and pair.violated.sample_id in by_sample
     ]
-    if not usable:
-        return None
+    if len(usable) < 2:
+        return {}
 
     normalised: dict[str, Any] = {}
     for name in STATISTICS:
-        column = f"phi_{name}"
+        column = f"{kind}_{name}"
         deltas = [
-            float(by_sample[p.violated.sample_id][column])
-            - float(by_sample[p.plausible.sample_id][column])
-            for p in usable
+            (
+                _maybe_float(by_sample[pair.violated.sample_id].get(column)),
+                _maybe_float(by_sample[pair.plausible.sample_id].get(column)),
+            )
+            for pair in usable
         ]
-        normalised[name] = scale_normalize(deltas)
+        if any(bad is None or good is None for bad, good in deltas):
+            continue
+        normalised[name] = scale_normalize([bad - good for bad, good in deltas])
 
-    # The ensemble output is already a per-pair signed delta, so it is scored directly.
-    return evaluate_deltas(or_ensemble(normalised), groups=[pair.scenario for pair in usable])
+    if not normalised:
+        return {}
+
+    groups = [pair.scenario for pair in usable]
+    # Both ensemble outputs are already per-pair signed deltas, so they score directly.
+    return {
+        "or": evaluate_deltas(or_ensemble(normalised), groups=groups),
+        "majority": evaluate_deltas(majority_ensemble(normalised), groups=groups),
+    }
+
+
+def score_ensembles(
+    rows: Sequence[dict[str, Any]],
+    pairs: Sequence[VideoPair],
+    kind: str = "phi",
+) -> dict[SignalKey, PairwiseResult]:
+    """OR and Majority at every probe location, keyed like the single-signal results."""
+    locations = {(row["source"], int(row["block"]), int(row["step"])) for row in rows}
+    results: dict[SignalKey, PairwiseResult] = {}
+    for source, block, step in sorted(locations):
+        for rule, result in ensemble_over_statistics(
+            rows, pairs, source, block, step, kind=kind
+        ).items():
+            results[SignalKey(source, block, step, rule, kind)] = result
+    return results
