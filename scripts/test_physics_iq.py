@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from phaselock import PhaseLockPipeline, set_seed
 
 
-DESCRIPTIONS_PATH = "/home/andrew/icml2026/physics-IQ-benchmark/descriptions.txt"
-SWITCH_FRAMES_DIR = "/home/andrew/icml2026/physics-IQ-benchmark/switch-frames"
+DESCRIPTIONS_PATH = "/data/datasets/physics-IQ-benchmark-verified/descriptions/best_practice/descriptions_base.txt"
+SWITCH_FRAMES_DIR = "/data/datasets/physics-IQ-benchmark-verified/switch-frames"
 
 
 def load_physics_iq_data(descriptions_path: str, switch_frames_dir: str):
@@ -48,7 +48,7 @@ def load_physics_iq_data(descriptions_path: str, switch_frames_dir: str):
 def main():
     parser = argparse.ArgumentParser(description="Test PhaseLock on Physics-IQ")
     parser.add_argument("--max_samples", type=int, default=2)
-    parser.add_argument("--output_dir", type=str, default="/home/andrew/PhaseLock/test_outputs")
+    parser.add_argument("--output_dir", type=str, default="/data/experiments/phaselock_geophys")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--guidance_strength", type=float, default=0.05)
     args = parser.parse_args()
