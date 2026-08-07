@@ -1,158 +1,138 @@
-from typing import Dict, Any, Optional
+"""Latent Delta Guidance, the PhaseLock mechanism.
+
+Transfers the motion prior captured by a few-step generation into a full-length one, by
+constraining frame-to-frame latent differences::
+
+    M_current = T(z) = z[2:F] - z[1:F-1]
+    G         = M_prior - M_current
+    z[2:F]   += lambda(k) * G
+
+with a linearly decaying schedule over ``[k_start, k_end)``. Frame 1 is the conditioning
+anchor and is never modified.
+
+This module is the Wan2.1 deliverable rather than an object of study: nothing in the
+experiment drivers calls it. It is kept correct because the original implementation
+hardcoded CogVideoX's ``(B, T, C, H, W)`` layout, and Wan's latents are ``(B, C, T, H, W)``
+-- unfixed, the guidance would difference the *channel* axis and still return a tensor
+of an entirely plausible shape.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 import torch
+
+from .backends.base import LatentSpec, from_canonical, to_canonical
+
+
+def extract_motion_prior(few_latents: torch.Tensor, spec: Optional[LatentSpec] = None) -> torch.Tensor:
+    """The Latent Delta Operator ``T(z) = z[2:F] - z[1:F-1]``.
+
+    Args:
+        few_latents: Latents from the few-step pass, canonical ``(T, C, H, W)`` or
+            batched in ``spec``'s layout.
+        spec: Required only if ``few_latents`` is batched.
+
+    Returns:
+        Canonical ``(T-1, C, H, W)`` motion prior.
+    """
+    if few_latents.ndim == 5:
+        if spec is None:
+            raise ValueError("a LatentSpec is required to interpret batched latents")
+        few_latents = to_canonical(few_latents, spec)
+    if few_latents.ndim != 4:
+        raise ValueError(f"expected (T, C, H, W) latents, got {tuple(few_latents.shape)}")
+    if few_latents.shape[0] < 2:
+        raise ValueError("a motion prior needs at least two latent frames")
+    return few_latents[1:] - few_latents[:-1]
 
 
 class LatentDeltaGuidance:
-    """
-    Applies Latent Delta Guidance to transfer motion priors from few-step inference
-    to high-fidelity generation.
-    
-    The guidance works by computing the difference between:
-    - few_delta: Frame differences from 2-step few-step inference (motion prior)
-    - current_delta: Frame differences from current denoising trajectory
-    
-    The residual is injected into subsequent frames to align their temporal
-    evolution with the physically consistent motion prior.
-    
+    """A ``callback_on_step_end`` callable that applies Latent Delta Guidance.
+
     Args:
-        motion_prior: Pre-computed motion prior tensor of shape (T-1, C, H, W)
-                     representing frame-to-frame latent deltas from few-step inference
-        guidance_strength: Initial guidance strength lambda_0 (default: 0.05)
-        guide_start: Denoising step to start guidance (default: 0)
-        guide_end: Denoising step to end guidance (default: K_full/2)
-        total_steps: Total number of denoising steps (default: 50)
+        motion_prior: Canonical ``(T-1, C, H, W)`` deltas from the few-step pass.
+        spec: Latent spec of the backend being guided. This is what makes the callback
+            layout-correct for both CogVideoX and Wan.
+        guidance_strength: Initial strength ``lambda_0``.
+        guide_start: First step at which guidance applies.
+        guide_end: First step at which it stops. Defaults to ``total_steps // 2``.
+        total_steps: Number of denoising steps in the guided pass.
     """
-    
+
     def __init__(
         self,
         motion_prior: torch.Tensor,
+        spec: LatentSpec,
         guidance_strength: float = 0.05,
         guide_start: int = 0,
-        guide_end: int = 25,
+        guide_end: Optional[int] = None,
         total_steps: int = 50,
     ):
+        if motion_prior.ndim != 4:
+            raise ValueError(
+                f"motion_prior must be canonical (T-1, C, H, W), got {tuple(motion_prior.shape)}"
+            )
+        if guidance_strength < 0:
+            raise ValueError(f"guidance_strength must be non-negative, got {guidance_strength}")
+
         self.motion_prior = motion_prior
+        self.spec = spec
         self.guidance_strength = guidance_strength
         self.guide_start = guide_start
-        self.guide_end = guide_end
+        self.guide_end = guide_end if guide_end is not None else total_steps // 2
         self.total_steps = total_steps
-        
-        self._validate_inputs()
-    
-    def _validate_inputs(self):
+
         if self.guide_end <= self.guide_start:
             raise ValueError(
-                f"guide_end ({self.guide_end}) must be greater than "
-                f"guide_start ({self.guide_start})"
+                f"guide_end ({self.guide_end}) must exceed guide_start ({self.guide_start})"
             )
-        if self.guidance_strength < 0:
-            raise ValueError(
-                f"guidance_strength must be non-negative, got {self.guidance_strength}"
-            )
-    
+
     def compute_schedule(self, step_index: int) -> float:
-        """
-        Compute guidance strength at current step using linear decay schedule.
-        
-        The schedule ensures strong adherence to motion prior during early steps
-        (when global layout is forming) and gradually relaxes to allow texture
-        refinement in later steps.
-        
-        Args:
-            step_index: Current denoising step (0-indexed)
-            
-        Returns:
-            Current guidance strength (0 if outside guidance interval)
+        """``lambda(k) = lambda_0 * (1 - (k - k_start) / (k_end - k_start))``.
+
+        Strong while the global layout is forming, relaxing to leave later steps free
+        for texture refinement.
         """
         if step_index < self.guide_start or step_index >= self.guide_end:
             return 0.0
-        
         progress = (step_index - self.guide_start) / (self.guide_end - self.guide_start)
         return self.guidance_strength * (1.0 - progress)
-    
+
     def __call__(
         self,
-        pipe,
+        pipe: Any,
         step_index: int,
         timestep: torch.Tensor,
         callback_kwargs: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Apply guidance at each denoising step.
-        
-        This method is called by the diffusers pipeline at each step via
-        callback_on_step_end mechanism.
-        
-        Args:
-            pipe: The diffusion pipeline (unused but required by callback signature)
-            step_index: Current denoising step
-            timestep: Current timestep tensor
-            callback_kwargs: Dictionary containing 'latents' tensor
-            
-        Returns:
-            Updated callback_kwargs with guided latents
-        """
-        current_strength = self.compute_schedule(step_index)
-        if current_strength == 0.0:
+        strength = self.compute_schedule(step_index)
+        if strength == 0.0:
             return callback_kwargs
-        
+
         latents = callback_kwargs.get("latents")
         if latents is None:
             return callback_kwargs
-        
-        guided_latents = self._apply_guidance(latents, current_strength)
-        callback_kwargs["latents"] = guided_latents
-        
+
+        callback_kwargs["latents"] = self.apply(latents, strength)
         return callback_kwargs
-    
-    def _apply_guidance(
-        self, 
-        latents: torch.Tensor, 
-        strength: float
-    ) -> torch.Tensor:
-        """
-        Apply latent delta guidance to current latents.
-        
-        Algorithm:
-            1. Compute current motion: M = z[2:F] - z[1:F-1]
-            2. Compute guidance signal: G = M_prior - M
-            3. Update subsequent frames: z[2:F] += lambda * G
-            (First frame is anchor and remains unmodified)
-        
-        Args:
-            latents: Current latent tensor of shape (B, T, C, H, W)
-            strength: Current guidance strength
-            
-        Returns:
-            Guided latent tensor
-        """
-        B, T, C, H, W = latents.shape
-        
-        current_motion = latents[:, 1:] - latents[:, :-1]
-        
-        motion_prior = self.motion_prior.to(latents.device, latents.dtype)
-        motion_prior = motion_prior.unsqueeze(0).expand(B, -1, -1, -1, -1)
-        
-        guidance_signal = motion_prior - current_motion
-        
-        guided_latents = latents.clone()
-        guided_latents[:, 1:] = latents[:, 1:] + strength * guidance_signal
-        
-        return guided_latents
 
+    def apply(self, latents: torch.Tensor, strength: float) -> torch.Tensor:
+        """Nudge frame-to-frame deltas toward the motion prior.
 
-def extract_motion_prior(few_latents: torch.Tensor) -> torch.Tensor:
-    """
-    Extract motion prior from few-step inference latents using the Latent Delta Operator.
-    
-    The Latent Delta Operator T(z) captures local temporal dynamics while being
-    invariant to time-independent features (e.g., static background):
-        T(z) = z[2:F] - z[1:F-1]
-    
-    Args:
-        few_latents: Latent sequence from few-step inference, shape (T, C, H, W)
-        
-    Returns:
-        Motion prior tensor of shape (T-1, C, H, W)
-    """
-    return few_latents[1:] - few_latents[:-1]
+        Converts to canonical form first, so one implementation covers every layout.
+        """
+        canonical = to_canonical(latents, self.spec)
+        if canonical.shape[0] - 1 != self.motion_prior.shape[0]:
+            raise ValueError(
+                f"motion prior covers {self.motion_prior.shape[0]} transitions but the latents "
+                f"have {canonical.shape[0] - 1}"
+            )
+
+        prior = self.motion_prior.to(canonical.device, canonical.dtype)
+        current = canonical[1:] - canonical[:-1]
+
+        guided = canonical.clone()
+        guided[1:] = canonical[1:] + strength * (prior - current)
+        return from_canonical(guided, self.spec).to(latents.dtype)

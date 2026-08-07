@@ -12,21 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""PhaseLock + GeoPhys: trajectory geometry in video diffusion internals.
+
+Two things live here:
+
+* **PhaseLock** -- the training-free Latent Delta Guidance method, now backend-agnostic
+  so it runs on Wan2.1 as well as CogVideoX.
+* **GeoPhys on internal representations** -- the five geometric statistics of a per-frame
+  feature trajectory, applied not to a frozen external encoder but to a video diffusion
+  model's own internals: DiT hidden states, VAE latents, clean-latent estimates and the
+  flow velocity field. Plus a new family of metrics coupling the two notions of
+  "velocity" that GeoPhys and flow matching each use.
 """
-PhaseLock: Physics in 2-Steps - Locking Motion Priors Before Visual Refinement Erases Them
 
-A training-free framework that locks motion dynamics to few-step inference priors for 
-physically consistent video generation.
-"""
+from .config import Config, load
+from .guidance import LatentDeltaGuidance, extract_motion_prior
+from .utils import resolve_dtype, set_seed
 
-from .guidance import LatentDeltaGuidance
-from .pipeline import PhaseLockPipeline
-from .utils import encode_video_to_latents, set_seed
+__version__ = "0.2.0"
 
-__version__ = "0.1.0"
 __all__ = [
+    "Config",
     "LatentDeltaGuidance",
-    "PhaseLockPipeline", 
-    "encode_video_to_latents",
+    "extract_motion_prior",
+    "load",
+    "resolve_dtype",
     "set_seed",
 ]
