@@ -28,11 +28,18 @@ carry the signal at all.
 > **Scope.** PhaseLock is not the object of study here. Every experiment runs on plain
 > baseline sampling with guidance off.
 
+## Documentation
+
+| | |
+|---|---|
+| **[docs/RUNNING.md](docs/RUNNING.md)** | **Start here to run anything.** Exact commands, what each stage reads and writes, CSV schemas, cost and storage, how to read the output, which sweeps matter. |
+| [docs/METHOD.md](docs/METHOD.md) | What is measured and why, and the four places the papers could not be followed literally. |
+
 ## Install
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 208 tests, CPU only, no weights needed
+python -m pytest tests/ -q          # 246 tests, CPU only, no weights needed
 ```
 
 ## The five statistics
@@ -143,23 +150,27 @@ accuracies will not match published numbers even with a correct implementation.
 
 ## Running
 
+Each stage depends on the previous one being believable, so run them in order. Full detail
+in [docs/RUNNING.md](docs/RUNNING.md).
+
 ```bash
 # 0. Smallest end-to-end check: 2 pairs, 20 steps. Minutes, not hours.
 python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml
 
-# 1. Correctness gate. Must land near the published 77.6-80.8% single-backbone range,
-#    or nothing measured on internal representations is interpretable.
+# 1. CORRECTNESS GATE. The same five statistics on frozen DINOv2 features, which must
+#    land near GeoPhys's published 77.6-80.8% on LikePhys. Until this passes, nothing
+#    measured on internal representations can be distinguished from noise.
 python scripts/run_external.py --config configs/experiments/detection_likephys.yaml
 
-# 2. Detection: geometry on internal representations
+# 2. Detection: geometry on internal representations. The main result.
 python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml
 python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
-    data__limit=48 inversion__num_steps=100
+    data__limit=48 inversion__num_steps=100        # overrides; unknown keys raise
 
-# 3. Read the results: per-source comparison and block x step heatmaps
+# 3. Read it: per-source comparison, ranked signals, block x step heatmaps
 python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys --figures
 
-# 4. Generation on labelled simulated data, and the step sweep with blur control
+# 4. Generation on labelled data, and the step sweep with PhaseLock's blur control
 python scripts/run_generation.py --config configs/experiments/generation_likephys.yaml
 python scripts/run_step_sweep.py --config configs/experiments/step_sweep_likephys.yaml
 
@@ -168,9 +179,11 @@ python scripts/inference.py --backend wan21_t2v_1_3b \
     --prompt "a ball bouncing on a table" --output /tmp/wan.mp4
 ```
 
-Extraction is resumable — clips already in `statistics.csv` are skipped. Unknown config
-keys raise rather than falling back to a default, because a typo that silently reverts to
-a default produces a plausible result under settings nobody chose.
+Artefacts land in `{output.root}/{output.name}/`: `statistics.csv` (raw per-clip
+measurements), `signals.csv` (pairwise accuracy per signal), `config.json` (provenance),
+plus `external/`, `figures/`, `videos/` and `trajectories/` as applicable.
+
+Extraction is resumable — clips already in `statistics.csv` are skipped.
 
 ## Status
 

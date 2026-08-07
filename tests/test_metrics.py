@@ -18,6 +18,7 @@ from phaselock.metrics.motion_mask import (
     motion_mask,
     motion_mask_scores,
     physics_iq_score,
+    psnr,
     spatial_iou,
     spatiotemporal_iou,
     weighted_spatial_iou,
@@ -203,3 +204,20 @@ def test_a_degenerate_ceiling_raises_rather_than_dividing_by_zero():
     ceiling = MotionMaskScores(0.0, 0.0, 0.0, 0.0)
     with pytest.raises(ValueError, match="ceiling scored"):
         physics_iq_score(MotionMaskScores(0.1, 0.1, 0.1, 0.0), ceiling)
+
+
+def test_psnr_endpoints_and_ordering():
+    """Used by the inversion reconstruction check, so its direction must be right."""
+    reference = torch.rand(4, 3, 16, 16)
+    assert psnr(reference, reference) == float("inf")
+
+    close = (reference + 0.01).clamp(0, 1)
+    far = (reference + 0.20).clamp(0, 1)
+    assert psnr(close, reference) > psnr(far, reference)
+
+
+def test_psnr_matches_the_closed_form():
+    reference = torch.zeros(2, 3, 8, 8)
+    generated = torch.full_like(reference, 0.1)
+    # MSE = 0.01 -> 10*log10(1/0.01) = 20 dB
+    assert psnr(generated, reference) == pytest.approx(20.0, abs=1e-6)

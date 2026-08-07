@@ -24,6 +24,7 @@ satisfy the protocol's assumptions directly, and later for Physics-IQ itself.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -83,6 +84,21 @@ def weighted_spatial_iou(generated: torch.Tensor, reference: torch.Tensor) -> fl
 def frame_mse(generated: torch.Tensor, reference: torch.Tensor) -> float:
     """Mean squared pixel error against the real continuation."""
     return float((generated - reference).pow(2).mean())
+
+
+def psnr(generated: torch.Tensor, reference: torch.Tensor) -> float:
+    """Peak signal-to-noise ratio in dB, for inputs in [0, 1].
+
+    Used for the inversion reconstruction check. Note what that check can and cannot
+    tell you: "The Invisible Hand of Physics" reports probe accuracy collapsing from
+    0.82 to 0.57 as integration steps drop from 100 to 20, while the reconstruction
+    stays visually faithful. A high PSNR is necessary but nowhere near sufficient --
+    it rules out a broken inversion, not a coarse trajectory.
+    """
+    error = frame_mse(generated, reference)
+    if error < 1e-12:
+        return float("inf")
+    return float(10.0 * math.log10(1.0 / error))
 
 
 @dataclass(frozen=True)

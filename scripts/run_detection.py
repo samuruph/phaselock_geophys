@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ from phaselock.config import parse_overrides
 from phaselock.datasets import get_paired_dataset
 from phaselock.experiments.detection import (
     extract_sample,
+    reconstruction_check,
     score_signals,
     summarise_by_source,
     unique_samples,
@@ -108,6 +110,16 @@ def extract(config, pairs, statistics_path, output) -> None:
         enable_offload=config.backend.offload,
     )
     trajectory_dir = config.output.dir("trajectories") if config.probe.save_trajectories else None
+
+    if config.inversion.reconstruction_check:
+        sample, _ = todo[0]
+        scores = reconstruction_check(backend, sample, config)
+        logger.info(
+            "reconstruction check on %s: PSNR %.2f dB at %d steps "
+            "(rules out a broken inversion; sweep num_steps for trajectory fidelity)",
+            sample.sample_id, scores["psnr"], int(scores["num_steps"]),
+        )
+        (output / "reconstruction.json").write_text(json.dumps(scores, indent=2))
 
     for index, (sample, pair) in enumerate(todo, start=1):
         rows = extract_sample(backend, sample, pair, config, trajectory_dir)

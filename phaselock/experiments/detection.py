@@ -199,6 +199,50 @@ def extract_sample(
     )
 
 
+def reconstruction_check(
+    backend: VideoBackend, sample: VideoSample, config: Config
+) -> dict[str, float]:
+    """Invert one clip, resample the recovered noise, and compare against the source.
+
+    Guards against an inversion that is simply broken. It cannot tell you the trajectory
+    is *good enough*: the Invisible Hand reports probe accuracy collapsing 0.82 -> 0.57
+    between 100 and 20 steps while the reconstruction stays visually faithful. That is
+    what the ``inversion__num_steps`` sweep is for.
+    """
+    from ..metrics.motion_mask import psnr
+    from ..pipelines.inversion import resample
+
+    spec = backend.spec
+    frames = load_video(
+        sample.path,
+        num_frames=spec.default_num_frames,
+        height=spec.default_height,
+        width=spec.default_width,
+        window=config.data.window,
+    )
+    result = invert(
+        backend,
+        frames,
+        num_steps=config.inversion.num_steps,
+        record_steps=1,
+        sources=[LATENT],
+        prompt=config.inversion.prompt,
+    )
+    recovered = backend.decode(
+        resample(
+            backend,
+            result.noise,
+            num_steps=config.inversion.num_steps,
+            prompt=config.inversion.prompt,
+        )
+    )
+    return {
+        "psnr": psnr(recovered.cpu(), frames.cpu()),
+        "mse": float((recovered.cpu() - frames.cpu()).pow(2).mean()),
+        "num_steps": float(config.inversion.num_steps),
+    }
+
+
 def unique_samples(pairs: Sequence[VideoPair]) -> list[tuple[VideoSample, VideoPair]]:
     """Every distinct clip exactly once, with a pair for its metadata.
 
