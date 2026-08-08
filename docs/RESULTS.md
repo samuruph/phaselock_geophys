@@ -2,9 +2,39 @@
 
 What has been measured, what the numbers mean, and what should not yet be believed.
 
-Written against run `detection_likephys_wan`, 2026-08-08. Every number here is
-reproducible from `/data/experiments/phaselock_geophys/detection_likephys_wan` with
+## Which model produced which number
+
+**Every number in this document is model-specific.** An accuracy measured by inverting
+with Wan says nothing about CogVideoX, and the two are never mixed in a table. Results are
+filed under `<backend>/<dataset>/<stage>/` so the path carries the provenance.
+
+| section | backend | mode | dataset | stage | status |
+|---|---|---|---|---|---|
+| §3–§6 (everything below) | **Wan2.1-T2V-1.3B** | T2V, inversion | LikePhys, 96 pairs | detection | **complete** |
+| §3 external baseline | DINOv2-large (frozen) | encoder, no diffusion | LikePhys, 96 pairs | detection | **complete** |
+| — | CogVideoX-5B-I2V | I2V, inversion | LikePhys | detection | in progress |
+| — | CogVideoX-5B-I2V | I2V, generation | LikePhys | generation | in progress |
+
+Written 2026-08-08 against
+`/data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/detection`, reproducible with
 `python scripts/report.py <run_dir> --figures`.
+
+### Why detection runs on Wan and generation on CogVideoX
+
+Not a preference — a measured constraint. Inversion fidelity is load-bearing for
+detection, and DDIM inversion of a Blender render is far off CogVideoX's training
+distribution. On the same LikePhys clip:
+
+| backend | VAE ceiling | inversion | gap |
+|---|---|---|---|
+| CogVideoX-5B-T2V (DDIM) | 47.4 dB | **6.9 dB** | 40.5 dB |
+| Wan2.1-1.3B (flow matching) | 51.1 dB | **43.9 dB** | 7.2 dB |
+
+Generation needs image-to-video, and the only I2V checkpoint that fits a 46 GB card is
+CogVideoX-5B-I2V — Wan's I2V is 14B. Generation runs the model *forward*, so inversion
+fidelity never enters and the constraint above does not apply. The cost is that detection
+and generation sit on different models, which is why a CogVideoX-5B-I2V detection run is
+in progress: without it, Stage 6 would have to pick its verifier from Wan numbers.
 
 > **Status.** Stage 5 (detection on labelled pairs) is complete, including the temporally
 > matched DINOv2 baseline. Stages 6–8 (generation, step sweep, IntPhys2) have not run.
@@ -187,6 +217,8 @@ Pairwise accuracy, mean ± s.d. across probe cells, `n = 96` pairs.
 
 ### The five statistics on internal representations
 
+**Backend: Wan2.1-T2V-1.3B**, inverted. LikePhys, 96 pairs.
+
 | source | φ_perr | φ_accel | φ_curv | φ_ang | φ_speed |
 |---|---|---|---|---|---|
 | **DiT hidden states** (300 cells) | **72.1 ± 3.0** | 66.7 ± 6.7 | 49.3 ± 7.0 | 49.4 ± 5.6 | 43.7 ± 6.4 |
@@ -199,6 +231,8 @@ Best single cell overall: **hidden states, block 6, step 4, `φ_accel` — 85.4%
 
 ### The same five on the external DINOv2 baseline
 
+**No diffusion model involved** — frozen DINOv2-large on the decoded frames.
+
 Temporally matched: DINOv2 features averaged over each latent's 4 video frames, so both
 paths have 21 trajectory points with the same spacing. Same 96 pairs. 25 readout layers.
 
@@ -209,6 +243,8 @@ paths have 21 trajectory points with the same spacing. Same 96 pairs. 25 readout
 Best DINOv2 cell: layer 7, `φ_speed`, **74.0%** over 125 cells.
 
 ### The three new metrics
+
+**Backend: Wan2.1-T2V-1.3B.**
 
 | metric | best source | mean | best cell |
 |---|---|---|---|

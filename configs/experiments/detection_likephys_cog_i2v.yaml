@@ -1,0 +1,59 @@
+# Stage 5 on CogVideoX-5B-I2V, so Stage 6 has an on-model reference.
+#
+# Why I2V rather than T2V, given T2V is the easier thing to invert:
+#
+# Stage 6 generates with CogVideoX-5B-I2V and reads that model's internals. A detection
+# result tells you *which* internal signal to trust as a verifier, and CogVideoX-5B-I2V is
+# not CogVideoX-5B-T2V with an adapter -- it is a separately finetuned checkpoint with 32
+# input channels. Its blocks are not the T2V blocks, so "block 6 carries the signal"
+# measured on T2V would be an unsupported transfer to the model actually being used. Using
+# the same checkpoint is the whole point of running this at all.
+#
+# The obvious worry -- that conditioning on the clip's own first frame leaks the answer --
+# does not apply here. Both members of a LikePhys pair share frame 0; the violation happens
+# later. So the conditioning is *identical* within a pair and cannot shift a within-pair
+# comparison. It only anchors the inversion, which is the one thing CogVideoX needs, since
+# unanchored DDIM inversion of a Blender render reconstructs at 9.1 dB against a 49.0 dB
+# VAE ceiling.
+#
+# Whether that anchoring actually rescues the inversion is measured, not assumed:
+# reconstruction_check is on, and the number belongs in RESULTS.md next to the accuracies.
+# If it stays near 9 dB, this run's internal numbers are not trustworthy and Stage 6 should
+# fall back to the DINOv2 verifier -- which is what GeoPhys itself uses, and is
+# model-agnostic.
+#
+# Start small (limit=12) to confirm the path, then raise. CogVideoX-5B is ~4x the cost of
+# Wan-1.3B per step, so a 96-pair run here is a much bigger commitment than it was there.
+
+backend:
+  name: cogvideox_5b_i2v
+  dtype: bfloat16
+  offload: true              # 5B plus 32-channel input; offload keeps headroom
+
+data:
+  name: likephys
+  limit: 12                  # one per scenario; raise once the path is confirmed
+  seed: 0
+  window: null
+  blur_sigma: 0.0
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 1            # all 42 blocks
+  pooling: mean
+  record_steps: 10
+  save_trajectories: false
+
+inversion:
+  num_steps: 50              # matched to the Wan run so the two are comparable
+  prompt: ""
+  reconstruction_check: true # load-bearing here, see above
+
+metrics:
+  ar_order: 3
+  residual_fit: span
+  bootstrap_resamples: 1000
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: detection

@@ -116,7 +116,7 @@ output can be traced back to the exact settings.
 | `metrics` | `ar_order`, `residual_fit`, `ridge_lambda`, `bootstrap_resamples` | statistic options |
 | `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed` | sampling |
 | | `negative_prompt` | passed through to the pipeline; `null` by default |
-| `output` | `root`, `name` | artefacts land in `{root}/{name}/` |
+| `output` | `root`, `name` | artefacts land in `{root}/{backend}/{dataset}/{name}/` |
 
 `limit` is a **balanced** draw across scenarios, not the first N — the first 60 LikePhys
 pairs are all `ball_collision`, so a pilot using them would measure one kind of physics.
