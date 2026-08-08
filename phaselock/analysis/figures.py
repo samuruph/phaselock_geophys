@@ -118,8 +118,8 @@ def source_comparison(
             if np.isnan(mean):
                 continue
             # Just above the bar top, below the error bar, so the two do not fight.
-            axis.text(x, mean + 0.8, f"{mean:.0f}\u00b1{std:.0f}", ha="center", va="bottom",
-                      fontsize=5.6, color=palette.TEXT_SECONDARY, rotation=90, zorder=6)
+            axis.text(x, mean + 0.8, f"{mean:.0f}", ha="center", va="bottom",
+                      fontsize=6.4, color=palette.TEXT_SECONDARY, zorder=6)
             axis.text(x, best + 1.4, f"{best:.0f}", ha="center", va="bottom",
                       fontsize=5.6, color=palette.TEXT_MUTED, zorder=6)
 
@@ -185,8 +185,8 @@ def external_comparison(
     axis.scatter(np.arange(len(names)), [100 * s.best for s in summaries], marker="D", s=16,
                  facecolors="none", edgecolors=palette.TEXT_SECONDARY, zorder=5)
     for index, item in enumerate(summaries):
-        axis.text(index, 100 * item.mean + 0.8, f"{100*item.mean:.1f}\u00b1{100*item.std:.1f}",
-                  ha="center", va="bottom", fontsize=7, color=palette.TEXT_SECONDARY)
+        axis.text(index, 100 * item.mean + 0.8, f"{100*item.mean:.1f}", ha="center",
+                  va="bottom", fontsize=7.5, color=palette.TEXT_SECONDARY)
         axis.text(index, 100 * item.best + 1.2, f"{100*item.best:.1f}", ha="center",
                   va="bottom", fontsize=7, color=palette.TEXT_MUTED)
     axis.set_ylim(0, 105)
@@ -435,8 +435,8 @@ def statistic_comparison(
                      linestyle=(0, (3, 3)))
 
     for index, (mean, std, best) in enumerate(zip(means, stds, bests)):
-        axis.text(index, mean + 0.8, f"{mean:.1f}\u00b1{std:.1f}", ha="center", va="bottom",
-                  fontsize=7, color=palette.TEXT_SECONDARY)
+        axis.text(index, mean + 0.8, f"{mean:.1f}", ha="center", va="bottom",
+                  fontsize=7.5, color=palette.TEXT_SECONDARY)
         axis.text(index, best + 1.2, f"{best:.1f}", ha="center", va="bottom",
                   fontsize=7, color=palette.TEXT_MUTED)
 
@@ -502,8 +502,8 @@ def drift_comparison(rows: Sequence[dict], path: Path) -> Optional[Path]:
     for index, source in enumerate(order):
         for offset, kind in ((-0.19, "phi"), (0.19, "drift")):
             mean, std = summary[source][kind]
-            axis.text(index + offset, mean + 0.8, f"{mean:.0f}\u00b1{std:.0f}", ha="center",
-                      va="bottom", fontsize=6.5, color=palette.TEXT_SECONDARY)
+            axis.text(index + offset, mean + 0.8, f"{mean:.0f}", ha="center",
+                      va="bottom", fontsize=7, color=palette.TEXT_SECONDARY)
 
     axis.set_ylim(0, 105)
     axis.set_ylabel("pairwise detection accuracy (%)")
