@@ -135,25 +135,32 @@ def invert(
             **(provenance or {}),
         )
 
-        for index, timestep in enumerate(ascending):
+        # z starts clean, so the level it currently sits at leads the schedule by one.
+        # Evaluating at level s and renoising back to s is the *identity* -- (x0, eps)
+        # were derived from z at s, so recombining them at s reconstructs z exactly. The
+        # step only advances if it targets the next level up.
+        levels = [0.0] + ascending
+
+        for index in range(len(ascending)):
             wanted = index in to_record
             # Hooks fire on every forward pass; arming decides whether they do any work.
             probe.arm() if wanted else probe.disarm()
 
-            tensor_timestep = torch.tensor(timestep, device=device)
+            current = torch.tensor(levels[index], device=device)
             model_output = backend.transformer_forward(
-                from_canonical(z, backend.spec), tensor_timestep, conditioning
+                from_canonical(z, backend.spec), current, conditioning
             )
             state = backend.denoiser_state(
-                from_canonical(z, backend.spec), model_output, tensor_timestep
+                from_canonical(z, backend.spec), model_output, current
             )
 
             if wanted:
                 probe.capture(len(recorded), state)
-                recorded.append(float(timestep))
+                recorded.append(float(levels[index]))
 
-            # Explicit step: evaluate at the known point, then move to the next level.
-            z = to_canonical(backend.renoise(state.x0, state.eps, tensor_timestep), backend.spec)
+            # Explicit step: evaluate at the known endpoint, then move up one level.
+            target = torch.tensor(levels[index + 1], device=device)
+            z = to_canonical(backend.renoise(state.x0, state.eps, target), backend.spec)
 
         record = probe.record
 

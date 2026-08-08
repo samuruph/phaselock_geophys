@@ -301,3 +301,53 @@ def test_inversion_writes_provenance(oracle, target_latent):
     assert provenance["backend"] == "oracle"
     assert provenance["num_steps"] == 10
     assert provenance["sample_id"] == "abc"
+
+
+# -- the integration loop actually integrates -------------------------------
+
+
+def test_inversion_follows_the_analytic_path_and_does_not_stand_still(constant_backend):
+    """Catches the identity bug: renoising to the level just evaluated at is a no-op.
+
+    ``(x0, eps)`` are derived from ``z`` at level ``s``, so recombining them at ``s``
+    reconstructs ``z`` exactly. A loop targeting the current level instead of the next
+    never advances -- and with an oracle denoiser it still round-trips, because resampling
+    a clean latent lands back on the target. Only a fixed ``(x0, eps)`` makes the targeted
+    level observable.
+    """
+    num_steps = 10
+    result = invert(
+        constant_backend,
+        frames=None,
+        latents=constant_backend.fixed_x0,
+        num_steps=num_steps,
+        record_steps=3,
+        sources=[LATENT],
+    )
+
+    # The recovered noise must sit at the top of the ladder, on the analytic path.
+    top = max(constant_backend.levels_seen)
+    scheduler = constant_backend.pipe.scheduler
+    scheduler.set_timesteps(num_steps)
+    highest = float(scheduler.timesteps.max()) / 1000.0
+    expected = (1 - highest) * constant_backend.fixed_x0 + highest * constant_backend.fixed_eps
+
+    assert torch.allclose(result.noise, expected, atol=1e-5), "did not land on the top level"
+    assert not torch.allclose(result.noise, constant_backend.fixed_x0, atol=1e-2), (
+        "inversion left the latent where it started"
+    )
+    # It climbed: the first level evaluated is the clean end, the last the noisy one.
+    assert constant_backend.levels_seen[0] < constant_backend.levels_seen[-1]
+    # Under the explicit scheme evaluation lags the target by one rung, so the highest
+    # level is only ever *targeted*, never evaluated at.
+    assert top < highest
+
+
+def test_inversion_evaluates_the_clean_end_first(constant_backend):
+    """The explicit scheme evaluates at the known endpoint, which starts at sigma = 0."""
+    invert(
+        constant_backend, frames=None, latents=constant_backend.fixed_x0,
+        num_steps=8, record_steps=2, sources=[LATENT],
+    )
+    assert constant_backend.levels_seen[0] == pytest.approx(0.0)
+    assert constant_backend.levels_seen == sorted(constant_backend.levels_seen)

@@ -199,3 +199,40 @@ def target_latent(latent_spec) -> torch.Tensor:
 @pytest.fixture
 def oracle(latent_spec, target_latent) -> OracleBackend:
     return OracleBackend(latent_spec, target_latent)
+
+
+class ConstantDenoiserBackend(OracleBackend):
+    """A backend whose denoiser always reports the *same* ``(x0, eps)``.
+
+    The oracle backend cannot catch a broken integration loop. Its denoiser infers ``eps``
+    from whatever ``z`` it is handed, so starting from the clean latent it infers
+    ``eps == x0`` and every renoise is a no-op regardless of which level is targeted --
+    a loop that never advances still round-trips perfectly.
+
+    Fixing ``(x0, eps)`` breaks that degeneracy: the latent must then trace the analytic
+    path ``z(s) = (1-s)*x0 + s*eps`` through the schedule, so the level each step targets
+    becomes observable.
+    """
+
+    def __init__(self, spec: LatentSpec, x0: torch.Tensor, eps: torch.Tensor, **kwargs):
+        super().__init__(spec, x0, **kwargs)
+        self.fixed_x0 = x0
+        self.fixed_eps = eps
+        self.levels_seen: list[float] = []
+
+    def denoiser_state(self, latents, model_output, timestep) -> DenoiserState:
+        sigma = self._sigma(timestep)
+        self.levels_seen.append(sigma)
+        return DenoiserState(
+            latents=to_canonical(latents, self.spec).float(),
+            x0=self.fixed_x0,
+            eps=self.fixed_eps,
+            tau=1.0 - sigma,
+        )
+
+
+@pytest.fixture
+def constant_backend(latent_spec, target_latent) -> ConstantDenoiserBackend:
+    generator = torch.Generator().manual_seed(1)
+    noise = torch.randn(target_latent.shape, generator=generator)
+    return ConstantDenoiserBackend(latent_spec, target_latent, noise)
