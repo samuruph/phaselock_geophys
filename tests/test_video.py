@@ -138,3 +138,24 @@ def test_save_video_shares_the_same_encoder(tmp_path):
         [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(path)], capture_output=True, text=True
     ).stderr
     assert "h264" in next(line for line in probe.splitlines() if "Video:" in line)
+
+
+def test_long_captions_shrink_to_fit_rather_than_overflow():
+    """A caption must never run off the panel.
+
+    Violation names vary hugely in length -- `plausible` against
+    `invalid_momentum_amplification` -- so a scale chosen from the panel width alone fits
+    one and clips the other.
+    """
+    import cv2
+
+    width = 720
+    long_text = "violated - invalid_momentum_amplification"
+    scale = video._fit_scale([long_text], width)
+    rendered = cv2.getTextSize(long_text, video._FONT, scale, 1)[0][0]
+    assert rendered <= width - 2 * video._pad(width), f"{rendered}px in {width}px"
+    assert scale >= video._MIN_SCALE
+
+
+def test_short_captions_are_not_shrunk_below_the_cap():
+    assert video._fit_scale(["plausible"], 720) == video._MAX_SCALE

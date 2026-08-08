@@ -23,18 +23,39 @@ import torch
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 _GUTTER = 4
 
-_MIN_SCALE = 0.9
-"""Font scale floor. Panels are tiled side by side and the result is usually viewed
-shrunk to fit a window, so a caption sized for the panel's own pixels ends up unreadable.
-These are sized to survive being halved."""
+_MIN_SCALE = 0.42
+"""Hard floor. Below this the caption is unreadable once the tiled frame is shrunk to
+fit a window, which is how these are actually viewed."""
+
+_MAX_SCALE = 0.95
+"""Hard ceiling, independent of panel size. Captions are labels, not headings."""
 
 
 def _band_height(width: int) -> int:
-    return max(34, int(round(width * 0.075)))
+    return max(30, min(46, int(round(width * 0.062))))
 
 
-def _font_scale(width: int) -> float:
-    return max(_MIN_SCALE, min(1.5, width / 470))
+def _fit_scale(texts: Sequence[str], width: int, thickness: int = 1) -> float:
+    """Largest scale at which every caption still fits the panel width.
+
+    Sizing from the panel width alone is not enough: a violation name like
+    `invalid_momentum_amplification` is four times longer than `plausible`, so a scale
+    that fits one runs off the edge for the other. Measure the actual strings and shrink
+    to whichever needs it most, so a caption is never clipped whatever it says.
+    """
+    usable = width - 2 * _pad(width)
+    scale = _MAX_SCALE
+    for text in texts:
+        if not text:
+            continue
+        measured = cv2.getTextSize(text, _FONT, _MAX_SCALE, thickness)[0][0]
+        if measured > usable:
+            scale = min(scale, _MAX_SCALE * usable / measured)
+    return max(_MIN_SCALE, scale)
+
+
+def _pad(width: int) -> int:
+    return max(6, width // 70)
 
 
 def _to_uint8(frames: torch.Tensor) -> np.ndarray:
@@ -49,19 +70,19 @@ def _label(panel: np.ndarray, text: str, sub: str = "") -> np.ndarray:
     """
     width = panel.shape[1]
     height = _band_height(width)
-    scale = _font_scale(width)
+    # Title and subtitle share one scale, sized so the longer of them fits.
+    scale = _fit_scale([text, sub], width)
     band = np.full((height, width, 3), 22, dtype=np.uint8)
 
-    pad = max(8, width // 60)
-    baseline = int(height * 0.68)
-    thickness = 2 if scale >= 1.0 else 1
-    cv2.putText(band, text, (pad, baseline), _FONT, scale, (245, 245, 245),
-                thickness, cv2.LINE_AA)
+    pad = _pad(width)
+    baseline = int(height * 0.7)
+    cv2.putText(band, text, (pad, baseline), _FONT, scale, (245, 245, 245), 1, cv2.LINE_AA)
     if sub:
-        size = cv2.getTextSize(sub, _FONT, scale * 0.8, 1)[0]
-        # Drop the subtitle rather than let it collide with the title.
-        if size[0] + pad * 3 + cv2.getTextSize(text, _FONT, scale, thickness)[0][0] < width:
-            cv2.putText(band, sub, (width - size[0] - pad, baseline), _FONT, scale * 0.8,
+        title_end = cv2.getTextSize(text, _FONT, scale, 1)[0][0] + pad
+        size = cv2.getTextSize(sub, _FONT, scale, 1)[0]
+        # Drop the subtitle rather than let it overlap the title.
+        if title_end + size[0] + 2 * pad <= width:
+            cv2.putText(band, sub, (width - size[0] - pad, baseline), _FONT, scale,
                         (155, 155, 155), 1, cv2.LINE_AA)
     return np.concatenate([band, panel], axis=0)
 
