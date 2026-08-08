@@ -114,6 +114,14 @@ def source_comparison(
             positions + offset, bests, marker="D", s=13, zorder=5,
             facecolors="none", edgecolors=palette.TEXT_SECONDARY, linewidths=0.9,
         )
+        for x, mean, std, best in zip(positions + offset, means, stds, bests):
+            if np.isnan(mean):
+                continue
+            # Just above the bar top, below the error bar, so the two do not fight.
+            axis.text(x, mean + 0.8, f"{mean:.0f}\u00b1{std:.0f}", ha="center", va="bottom",
+                      fontsize=5.6, color=palette.TEXT_SECONDARY, rotation=90, zorder=6)
+            axis.text(x, best + 1.4, f"{best:.0f}", ha="center", va="bottom",
+                      fontsize=5.6, color=palette.TEXT_MUTED, zorder=6)
 
     if has_external:
         axis.axvline(len(sources) - 1.5, color=palette.TEXT_MUTED, linewidth=1.2,
@@ -127,7 +135,9 @@ def source_comparison(
     axis.set_title("Internal representations vs the external DINOv2 baseline")
     axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize=8)
     axis.grid(axis="x", visible=False)
-    axis.set_ylim(35, 100)
+    # From zero: a bar encodes magnitude by length, so a truncated baseline exaggerates
+    # differences. The chance line and the null bands carry the reference instead.
+    axis.set_ylim(0, 105)
 
     cells = max((s.n_cells for s in summaries if s.source != "dinov2"), default=0)
     note = (
@@ -174,6 +184,12 @@ def external_comparison(
              zorder=3)
     axis.scatter(np.arange(len(names)), [100 * s.best for s in summaries], marker="D", s=16,
                  facecolors="none", edgecolors=palette.TEXT_SECONDARY, zorder=5)
+    for index, item in enumerate(summaries):
+        axis.text(index, 100 * item.mean + 0.8, f"{100*item.mean:.1f}\u00b1{100*item.std:.1f}",
+                  ha="center", va="bottom", fontsize=7, color=palette.TEXT_SECONDARY)
+        axis.text(index, 100 * item.best + 1.2, f"{100*item.best:.1f}", ha="center",
+                  va="bottom", fontsize=7, color=palette.TEXT_MUTED)
+    axis.set_ylim(0, 105)
     palette.annotate_chance(axis, CHANCE)
     axis.set_xticks(np.arange(len(names)), [palette.statistic_plain(n) for n in names],
                     fontsize=8, rotation=15, ha="right")
@@ -418,14 +434,16 @@ def statistic_comparison(
         axis.axvline(len(singles) - 0.5, color=palette.GRID, linewidth=1.4,
                      linestyle=(0, (3, 3)))
 
-    for index, (mean, std) in enumerate(zip(means, stds)):
-        axis.text(index, mean + std + 1.0, f"{mean:.0f}", ha="center", va="bottom",
-                  fontsize=8, color=palette.TEXT_SECONDARY)
+    for index, (mean, std, best) in enumerate(zip(means, stds, bests)):
+        axis.text(index, mean + 0.8, f"{mean:.1f}\u00b1{std:.1f}", ha="center", va="bottom",
+                  fontsize=7, color=palette.TEXT_SECONDARY)
+        axis.text(index, best + 1.2, f"{best:.1f}", ha="center", va="bottom",
+                  fontsize=7, color=palette.TEXT_MUTED)
 
     axis.set_xticks(np.arange(len(names)),
                     [palette.statistic_plain(n) for n in names],
                     fontsize=8, rotation=20, ha="right")
-    axis.set_ylim(35, max(100, float(bests.max()) + 6))
+    axis.set_ylim(0, max(105, float(bests.max()) + 8))
     axis.set_ylabel("pairwise detection accuracy (%)")
     axis.set_title(f"Which statistic carries the signal? — {palette.source_label(source)}")
     axis.grid(axis="x", visible=False)
@@ -481,7 +499,13 @@ def drift_comparison(rows: Sequence[dict], path: Path) -> Optional[Path]:
     palette.annotate_chance(axis, CHANCE)
 
     axis.set_xticks(positions, [palette.source_label(s) for s in order], fontsize=8)
-    axis.set_ylim(40, 100)
+    for index, source in enumerate(order):
+        for offset, kind in ((-0.19, "phi"), (0.19, "drift")):
+            mean, std = summary[source][kind]
+            axis.text(index + offset, mean + 0.8, f"{mean:.0f}\u00b1{std:.0f}", ha="center",
+                      va="bottom", fontsize=6.5, color=palette.TEXT_SECONDARY)
+
+    axis.set_ylim(0, 105)
     axis.set_ylabel("pairwise detection accuracy (%)")
     axis.set_title("Is the geometry more telling than its rate of change under the flow?")
     axis.legend(loc="upper right")
@@ -556,6 +580,104 @@ def step_sweep(cells: Sequence[dict], path: Path, metric: str = "phi_curv") -> O
     return path
 
 
+# -- GeoPhys Figure 3 analogue: the statistic itself, not its accuracy -------
+
+
+def signal_profile(
+    statistics_rows: Sequence[dict],
+    path: Path,
+    source: str = "hidden_states",
+    x_axis: str = "block",
+    steps_to_timestep: Optional[Mapping[int, int]] = None,
+) -> Optional[Path]:
+    """Raw statistic values for plausible vs violated clips, across depth or time.
+
+    The analogue of GeoPhys Figure 3, which plots mean curvature per layer with plausible
+    below violated at every layer. This shows all five statistics rather than curvature
+    alone, plus the two new flow-coupling metrics where available.
+
+    Unlike every other figure here, the y-axis is the **statistic itself**, not a
+    detection accuracy. That matters: a gap between the two curves is the raw effect,
+    before any thresholding or pairing, so it shows both *whether* the classes separate
+    and *in which direction*. GeoPhys's claim is that violated sits above plausible
+    everywhere, since all five are oriented so larger means less regular.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    names = [n for n in ("speed", "curv", "ang", "accel", "perr") if f"phi_{n}" in (statistics_rows[0] if statistics_rows else {})]
+    if not names:
+        return None
+
+    key = "block" if x_axis == "block" else "step"
+    grouped: dict[tuple[str, int, int], list[float]] = defaultdict(list)
+    for row in statistics_rows:
+        if row["source"] != source:
+            continue
+        try:
+            position, label = int(row[key]), int(row["label"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for name in names:
+            value = row.get(f"phi_{name}")
+            if value not in (None, ""):
+                grouped[(name, position, label)].append(float(value))
+
+    positions = sorted({pos for _, pos, _ in grouped})
+    if len(positions) < 2:
+        return None
+
+    columns = min(len(names), 3)
+    rows_count = (len(names) + columns - 1) // columns
+    figure, axes = plt.subplots(rows_count, columns, figsize=(4.3 * columns, 3.3 * rows_count),
+                                squeeze=False, layout="constrained")
+
+    for index, name in enumerate(names):
+        axis = axes[index // columns][index % columns]
+        for label, colour, text in ((0, palette.CATEGORICAL[0], "plausible"),
+                                    (1, palette.CATEGORICAL[7], "violated")):
+            means, stds, valid = [], [], []
+            for position in positions:
+                values = grouped.get((name, position, label), [])
+                if values:
+                    valid.append(position)
+                    means.append(float(np.mean(values)))
+                    stds.append(float(np.std(values)))
+            if not valid:
+                continue
+            means, stds = np.array(means), np.array(stds)
+            axis.plot(valid, means, color=colour, label=text, marker="o", markersize=3)
+            axis.fill_between(valid, means - stds, means + stds, color=colour, alpha=0.16,
+                              linewidth=0)
+        axis.set_title(palette.statistic_label(name), fontsize=9)
+        axis.set_xlabel("block index (depth)" if key == "block" else "diffusion timestep")
+        if key == "step" and steps_to_timestep:
+            shown = [p for p in positions if p in steps_to_timestep]
+            axis.set_xticks(shown, [steps_to_timestep[p] for p in shown], fontsize=7, rotation=90)
+        if index % columns == 0:
+            axis.set_ylabel("statistic value")
+        if index == 0:
+            axis.legend(loc="best", fontsize=8)
+
+    for spare in range(len(names), rows_count * columns):
+        axes[spare // columns][spare % columns].axis("off")
+
+    figure.suptitle(
+        f"Statistic value, plausible vs violated — {palette.source_label(source)}",
+        x=0.01, ha="left", fontsize=11, fontweight="bold", color=palette.TEXT_PRIMARY,
+    )
+    figure.get_layout_engine().set(rect=(0, 0.055, 1, 0.94))
+    palette.caption(
+        figure,
+        "Line = mean across clips, band = 1 s.d. All five are oriented so larger means less "
+        "regular, so GeoPhys predicts violated (red) above plausible (blue) at every depth. "
+        "This is the raw effect, before any pairing or thresholding.",
+    )
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+    return path
+
+
 # -- F7: what lives inside a single latent ----------------------------------
 
 
@@ -622,6 +744,7 @@ def render_all(
     steps_to_timestep: Optional[Mapping[int, int]] = None,
     sweep: Optional[Sequence[dict]] = None,
     latent_profiles: Optional[dict] = None,
+    statistics_rows: Optional[Sequence[dict]] = None,
 ) -> list[Path]:
     """Render the whole figure set.
 
@@ -657,4 +780,11 @@ def render_all(
         add(depth_profile(rows, folder / "02_depth_profile.png", source=source))
         add(depth_time_heatmaps(rows, folder / "03_depth_vs_time.png", source=source,
                                 steps_to_timestep=steps_to_timestep))
+        if statistics_rows:
+            # GeoPhys Figure 3 analogue: the statistic itself for plausible vs violated.
+            add(signal_profile(statistics_rows, folder / "04_signal_profile_depth.png",
+                               source=source, x_axis="block"))
+            add(signal_profile(statistics_rows, folder / "05_signal_profile_time.png",
+                               source=source, x_axis="step",
+                               steps_to_timestep=steps_to_timestep))
     return written

@@ -50,6 +50,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--layers", type=int, nargs="*", default=None, help="restrict the readout sweep")
     parser.add_argument("--frames", type=int, default=None, help="override the backend's frame count")
     parser.add_argument("--image-size", type=int, default=224, help="encoder input resolution")
+    parser.add_argument("--temporal-pool", default="none", choices=["none", "latent"],
+                        help="'latent' averages frames over each latent's group, matching the "
+                             "causal VAE so the trajectory length equals the internal path's")
     parser.add_argument("overrides", nargs="*")
     return parser.parse_args()
 
@@ -60,7 +63,7 @@ def main() -> None:
     config = load(args.config, **parse_overrides(args.overrides))
     set_seed(config.data.seed)
 
-    output = config.output.dir("external")
+    output = config.output.dir("external" if args.temporal_pool == "none" else f"external_{args.temporal_pool}")
     dataset_kwargs = {}
     if config.data.root:
         dataset_kwargs["root"] = config.data.root
@@ -84,7 +87,8 @@ def main() -> None:
 
     rows = []
     for index, (sample, pair) in enumerate(samples, start=1):
-        rows.extend(encode_sample(encoder, sample, pair, config, layers=args.layers, num_frames=args.frames))
+        rows.extend(encode_sample(encoder, sample, pair, config, layers=args.layers,
+                                  num_frames=args.frames, temporal_pool=args.temporal_pool))
         if index % 20 == 0 or index == len(samples):
             logger.info("[%d/%d] encoded", index, len(samples))
 

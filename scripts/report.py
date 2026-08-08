@@ -232,6 +232,7 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
         rows, run_dir / "figures", summaries=summaries,
         external_summaries=external_summaries, null=null,
         steps_to_timestep=steps_to_timestep, sweep=sweep,
+        statistics_rows=statistics,
     )
     print(f"\nwrote {len(written)} figures to {run_dir / 'figures'}")
     for path in written:

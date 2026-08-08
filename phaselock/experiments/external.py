@@ -24,6 +24,37 @@ from ..encoders import DINOv2Encoder
 from ..metrics.geophys import STATISTICS, geophys_statistics
 from ..metrics.scoring import PairwiseResult, evaluate_pairs
 
+TemporalPool = str
+"""``"none"`` keeps one trajectory point per video frame; ``"latent"`` pools to the
+backend's latent grid. See :func:`pool_to_latent_grid`."""
+
+
+def pool_to_latent_grid(trajectory: "torch.Tensor", spec) -> "torch.Tensor":
+    """Average per-frame features over each latent's frame group.
+
+    Without this the external and internal paths are not comparable. A causal VAE folds
+    four video frames into one latent, so Wan gives 21 trajectory points for an 81-frame
+    clip while DINOv2 gives 81. Both the number of points and the spacing between them
+    differ, and every GeoPhys statistic depends on both -- ``phi_speed`` is a standard
+    deviation over ``T-1`` displacements, ``phi_curv`` a mean over ``T-2`` angles, and
+    consecutive frames 1/4 as far apart produce systematically smaller displacements and
+    different turning angles.
+
+    Averaging the frames the VAE would have folded together is the matched operation: it
+    reproduces the VAE's temporal pooling in feature space, leaving the two paths with the
+    same trajectory length and the same temporal support per point.
+    """
+    from ..analysis.latent_motion import frames_for_latent
+    from ..backends.base import num_latent_frames
+
+    total = trajectory.shape[0]
+    pooled = []
+    for index in range(num_latent_frames(total, spec)):
+        group = [f for f in frames_for_latent(index, spec) if f < total]
+        if group:
+            pooled.append(trajectory[group].mean(dim=0))
+    return torch.stack(pooled)
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,6 +88,7 @@ def encode_sample(
     config: Config,
     layers: Optional[Sequence[int]] = None,
     num_frames: Optional[int] = None,
+    temporal_pool: TemporalPool = "none",
 ) -> list[ExternalRow]:
     """Encode one clip and compute the statistics at each requested layer.
 
@@ -82,6 +114,13 @@ def encode_sample(
     )
 
     trajectories = encoder.encode_all_layers(frames)
+    if temporal_pool == "latent":
+        from ..backends import get_spec
+
+        spec = get_spec(config.backend.name)
+        trajectories = {k: pool_to_latent_grid(v, spec) for k, v in trajectories.items()}
+    elif temporal_pool != "none":
+        raise ValueError(f"temporal_pool must be 'none' or 'latent', got {temporal_pool!r}")
     chosen = sorted(trajectories) if layers is None else list(layers)
 
     return [
