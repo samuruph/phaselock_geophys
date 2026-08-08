@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 """Turn a detection run's CSVs into readable tables and block x step heatmaps.
 
-    python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys
+    python scripts/report.py /data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/inversion
     python scripts/report.py <run_dir> --statistic curv --source hidden_states
 
 The headline output is the per-source comparison: which internal representation carries
 the geometry. The heatmaps are the geometric analogue of the Invisible Hand's Figure 4,
 which found linear-probe accuracy peaking in the middle third of the network.
 
-Reads ``signals.csv`` (written by ``run_detection.py``) and, if present,
+Reads ``signals.csv`` (written by ``run_inversion.py``) and, if present,
 ``external/external_signals.csv`` for the DINOv2 correctness gate.
 """
 
@@ -54,7 +54,7 @@ def main() -> None:
     args = parse_args()
     rows = load(args.run_dir / "signals.csv")
     if not rows:
-        raise SystemExit(f"no signals.csv under {args.run_dir}; run scripts/run_detection.py first")
+        raise SystemExit(f"no signals.csv under {args.run_dir}; run scripts/run_inversion.py first")
 
     for row in rows:
         row["accuracy"] = float(row["accuracy"])

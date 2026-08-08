@@ -7,7 +7,7 @@ settings nobody chose, and there is no way to tell after the fact.
 
 Command-line overrides use ``section__key=value``::
 
-    python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \\
+    python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \\
         inversion__num_steps=100 data__limit=24
 """
 

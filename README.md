@@ -115,7 +115,7 @@ phaselock/
   experiments/  detection, external, generation, step_sweep
 configs/experiments/    pilot, detection_{likephys,intphys2},
                         generation_likephys, step_sweep_likephys
-scripts/        run_detection, run_external, run_generation, run_step_sweep,
+scripts/        run_inversion, run_external, run_generation, run_step_sweep,
                 report, inference
 ```
 
@@ -155,20 +155,20 @@ in [docs/RUNNING.md](docs/RUNNING.md).
 
 ```bash
 # 0. Smallest end-to-end check: 2 pairs, 20 steps. Minutes, not hours.
-python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml
+python scripts/run_inversion.py --config configs/experiments/pilot_likephys.yaml
 
 # 1. CORRECTNESS GATE. The same five statistics on frozen DINOv2 features, which must
 #    land near GeoPhys's published 77.6-80.8% on LikePhys. Until this passes, nothing
 #    measured on internal representations can be distinguished from noise.
-python scripts/run_external.py --config configs/experiments/detection_likephys.yaml
+python scripts/run_external.py --config configs/experiments/inversion_likephys_cog_t2v.yaml
 
 # 2. Detection: geometry on internal representations. The main result.
-python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml
-python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
+python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml
+python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \
     data__limit=48 inversion__num_steps=100        # overrides; unknown keys raise
 
 # 3. Read it: per-source comparison, ranked signals, block x step heatmaps
-python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys --figures
+python scripts/report.py /data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/inversion --figures
 
 # 4. Generation on labelled data, and the step sweep with PhaseLock's blur control
 python scripts/run_generation.py --config configs/experiments/generation_likephys.yaml

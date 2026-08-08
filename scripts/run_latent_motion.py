@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """What lives inside a single latent, and is it a usable prior?
 
-    python scripts/run_latent_motion.py --config configs/experiments/detection_likephys_wan.yaml \
+    python scripts/run_latent_motion.py --config configs/experiments/inversion_likephys_wan.yaml \
         data__limit=24
 
 A causal VAE bundles four video frames into one latent, so motion *inside* a latent is

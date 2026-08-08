@@ -36,7 +36,7 @@ implemented and tested, but **no script reported them** — a real gap, because 
 77.6–80.8% for the best single signal. Reporting only single signals would have understated
 the method by ~18 points and made the comparison against the paper meaningless.
 
-`run_detection.py` now reports OR and Majority per `(source, block, step)` alongside the
+`run_inversion.py` now reports OR and Majority per `(source, block, step)` alongside the
 single-signal table, and both land in `signals.csv` with `statistic ∈ {or, majority}`.
 
 Writing the test for it exposed a second bug: `scale_normalize` divided by the standard
@@ -105,7 +105,7 @@ the actual `latents.shape` the callback receives.
 ### Rung 3 — CogVideoX inversion, one clip (~10 min)
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml \
+python scripts/run_inversion.py --config configs/experiments/pilot_likephys.yaml \
     data__limit=1 inversion__reconstruction_check=true
 ```
 
@@ -134,7 +134,7 @@ block hooks, pooling, `denoiser_state`, `renoise`, statistics, CSV writing.
 ### Rung 4 — pilot detection, 2 pairs (~20 min)
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml
+python scripts/run_inversion.py --config configs/experiments/pilot_likephys.yaml
 python scripts/report.py /data/experiments/phaselock_geophys/pilot_likephys
 ```
 
@@ -147,7 +147,7 @@ and `empirical` for `hidden_states`.
 ### Rung 5 — DINOv2 correctness gate (~30 min)
 
 ```bash
-python scripts/run_external.py --config configs/experiments/detection_likephys.yaml \
+python scripts/run_external.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \
     data__limit=60
 ```
 
@@ -221,9 +221,9 @@ The sweeps decide the settings for the expensive runs, so they come before them.
 ### 2.2 Main detection run
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
+python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \
     data__limit=120 inversion__num_steps=<best from sweep>
-python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys --figures
+python scripts/report.py /data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/inversion --figures
 ```
 
 120 balanced pairs, ~200 distinct clips after deduplication. Then scale to all 800 pairs if
@@ -241,7 +241,7 @@ the signal is there.
 ### 2.3 IntPhys2
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/detection_intphys2.yaml \
+python scripts/run_inversion.py --config configs/experiments/inversion_intphys2.yaml \
     data__window=null      # and 0.5, and 0.25
 ```
 
@@ -331,13 +331,13 @@ python scripts/inference.py --backend wan21_t2v_1_3b --prompt "a ball bouncing" 
     --output /tmp/wan_pl.mp4 --few-steps 2 --full-steps 8
 
 # 3-4. inversion path  (add backend__offload=false at the first sign of trouble)
-python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml \
+python scripts/run_inversion.py --config configs/experiments/pilot_likephys.yaml \
     data__limit=1 inversion__reconstruction_check=true
-python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml
+python scripts/run_inversion.py --config configs/experiments/pilot_likephys.yaml
 python scripts/report.py /data/experiments/phaselock_geophys/pilot_likephys
 
 # 5. THE GATE
-python scripts/run_external.py --config configs/experiments/detection_likephys.yaml \
+python scripts/run_external.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \
     data__limit=60
 
 # 6. generation path

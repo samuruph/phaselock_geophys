@@ -15,8 +15,11 @@ filed under `<backend>/<dataset>/<stage>/` so the path carries the provenance.
 | §7 (secondary) | CogVideoX-5B-I2V | I2V, inversion | LikePhys, 12 pairs | detection | in progress |
 | §7 (secondary) | CogVideoX-5B-I2V | I2V, generation | LikePhys, 6 clips | generation | in progress |
 
-Written 2026-08-08 against
-`/data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/detection`, reproducible with
+Written 2026-08-08. The 96-pair Wan run behind §3-§6 predates a rename of the stage from
+`detection` to `inversion` (the name now says where the trajectory came from, since GeoPhys
+statistics and pairwise scoring happen in every stage). That run is kept under
+`_archive/pre_restart_*/wan21_t2v_1_3b/likephys/detection`; the re-run lands at
+`wan21_t2v_1_3b/likephys/inversion`. Reproduce with
 `python scripts/report.py <run_dir> --figures`.
 
 ### Reading the fidelity numbers: dB, and the "VAE ceiling"
@@ -480,13 +483,13 @@ which nothing here has tested.
 
 ```bash
 # the run behind this document
-python scripts/run_detection.py --config configs/experiments/detection_likephys_wan.yaml
+python scripts/run_inversion.py --config configs/experiments/inversion_likephys_wan.yaml
 
 # tables + every figure
-python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys_wan --figures
+python scripts/report.py /data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/inversion --figures
 
 # the correctness gate, temporally matched
-python scripts/run_external.py --config configs/experiments/detection_likephys_wan.yaml \
+python scripts/run_external.py --config configs/experiments/inversion_likephys_wan.yaml \
     --temporal-pool latent output__name=gate_likephys_pooled
 ```
 

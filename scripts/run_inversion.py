@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Stage 5: score GeoPhys geometry on internal representations of labelled clips.
 
-    python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml
-    python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
+    python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml
+    python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \
         data__limit=24 inversion__num_steps=100
 
 Extraction is resumable: clips already present in ``statistics.csv`` are skipped, so an
@@ -43,7 +43,7 @@ from phaselock.experiments.detection import (
 from phaselock.metrics.scoring import selection_null
 from phaselock.utils import resolve_dtype
 
-logger = logging.getLogger("run_detection")
+logger = logging.getLogger("run_inversion")
 
 
 def parse_args() -> argparse.Namespace:

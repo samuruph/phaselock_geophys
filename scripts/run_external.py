@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """The published GeoPhys path: five statistics on frozen DINOv2 features.
 
-    python scripts/run_external.py --config configs/experiments/detection_likephys.yaml
+    python scripts/run_external.py --config configs/experiments/inversion_likephys_cog_t2v.yaml
 
 This is the correctness gate for everything else. GeoPhys reports 78-81% pairwise accuracy
 on LikePhys from a single frozen backbone. If this run lands far from that, the statistics,

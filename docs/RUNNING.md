@@ -23,14 +23,14 @@ Each stage depends on the one before it being believable.
 
 | | stage | command | needs GPU | why it comes here |
 |---|---|---|---|---|
-| 0 | pilot | `run_detection.py --config .../pilot_likephys.yaml` | yes | proves the path end to end in minutes |
-| 1 | **correctness gate** | `run_external.py --config .../detection_likephys.yaml` | yes | **nothing downstream is interpretable until this passes** |
-| 2 | detection | `run_detection.py --config .../detection_likephys.yaml` | yes | the main result |
+| 0 | pilot | `run_inversion.py --config .../pilot_likephys.yaml` | yes | proves the path end to end in minutes |
+| 1 | **correctness gate** | `run_external.py --config .../inversion_likephys_cog_t2v.yaml` | yes | **nothing downstream is interpretable until this passes** |
+| 2 | **inversion** | `run_inversion.py --config .../inversion_likephys_cog_t2v.yaml` | yes | the main result |
 | 3 | report | `report.py <run_dir> --figures` | no | turns CSVs into tables and heatmaps |
 | 4 | generation | `run_generation.py --config .../generation_likephys.yaml` | yes | Stage 6 |
 | 5 | step sweep | `run_step_sweep.py --config .../step_sweep_likephys.yaml` | yes | Stage 7, with the blur control |
 
-**Why Wan for detection.** Inversion fidelity is the load-bearing assumption of the whole
+**Why Wan for the inversion stage.** Inversion fidelity is the load-bearing assumption of the whole
 track: the internal states only mean something if the recovered trajectory is the one the
 model would actually have taken. Measured on the same LikePhys clip:
 >
@@ -72,7 +72,7 @@ python -m pytest tests/ -q          # 296 tests, CPU only, no weights, ~2 s
 
 | backend | source | note |
 |---|---|---|
-| `wan21_t2v_1_3b` | `/data/weights/Wan2.1-T2V-1.3B-Diffusers` | **detection default** — see below |
+| `wan21_t2v_1_3b` | `/data/weights/Wan2.1-T2V-1.3B-Diffusers` | **inversion default** — see below |
 | `cogvideox_5b_i2v` | `THUDM/CogVideoX-5B-I2V` (HF cache) | generation default (I2V) |
 | `cogvideox_5b_t2v` | `/data/weights/CogVideoX-5b-Diffusers` | available, but a poor inverter here |
 | `wan21_*_14b*` | HF | **registered but unvalidated** — will not fit a 46 GB card |
@@ -86,7 +86,7 @@ One YAML per experiment in `configs/experiments/`, plus `section__key=value` ove
 the command line:
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml \
+python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml \
     data__limit=48 inversion__num_steps=100 probe__block_stride=4
 ```
 
@@ -126,7 +126,7 @@ pairs are all `ball_collision`, so a pilot using them would measure one kind of 
 ## 3. Stage 0 — pilot
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/pilot_likephys.yaml
+python scripts/run_inversion.py --config configs/experiments/pilot_likephys.yaml
 ```
 
 2 pairs, 20 inversion steps, 5 recorded steps, every 8th block, trajectories saved. The
@@ -136,7 +136,7 @@ per-step cost on your GPU** so the estimates below can be replaced with real one
 Time one clip, then everything else is arithmetic:
 
 ```
-detection wall-clock  ≈  (distinct clips) × (inversion num_steps) × (seconds per step)
+inversion wall-clock ≈  (distinct clips) × (inversion num_steps) × (seconds per step)
 ```
 
 ---
@@ -144,7 +144,7 @@ detection wall-clock  ≈  (distinct clips) × (inversion num_steps) × (seconds
 ## 4. Stage 1 — the correctness gate
 
 ```bash
-python scripts/run_external.py --config configs/experiments/detection_likephys.yaml
+python scripts/run_external.py --config configs/experiments/inversion_likephys_cog_t2v.yaml
 ```
 
 Decodes each clip, resamples it to the **backend's** native frame count (so the external
@@ -177,10 +177,10 @@ the cheapest GPU stage.
 
 ---
 
-## 5. Stage 2 — detection
+## 5. Stage 2 — inversion
 
 ```bash
-python scripts/run_detection.py --config configs/experiments/detection_likephys.yaml
+python scripts/run_inversion.py --config configs/experiments/inversion_likephys_cog_t2v.yaml
 ```
 
 ### What happens per clip
@@ -277,7 +277,7 @@ roughly 40 KB per clip.
 ## 6. Stage 3 — reading the results
 
 ```bash
-python scripts/report.py /data/experiments/phaselock_geophys/detection_likephys --figures
+python scripts/report.py /data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/inversion --figures
 python scripts/report.py <run_dir> --statistic curv --source hidden_states --kind drift
 ```
 
@@ -405,15 +405,27 @@ PhaseLock's spectral metric *does* survive the same control, so the two families
 
 ## 9. Output tree
 
-Runs are filed as **`output.root / <backend> / <dataset> / <output.name>`**. An accuracy
-from Wan T2V says nothing about CogVideoX I2V, so the path carries the provenance rather
-than leaving it to a naming convention:
+Runs are filed as **`output.root / <backend> / <dataset> / <stage>`**. An accuracy from
+Wan T2V says nothing about CogVideoX I2V, so the path carries the provenance rather than
+leaving it to a naming convention.
+
+**The stage names say where the latent trajectory came from**, which is the thing that
+actually differs between them. They are deliberately not named after the question being
+asked -- "detection" would fit three of these, since GeoPhys statistics and pairwise
+scoring happen in every stage:
+
+| stage | trajectory source | labels |
+|---|---|---|
+| `inversion` | a **real** video, sampler run backwards to recover the trajectory it never had | ground truth, from the dataset |
+| `generation` | the model's **own** forward sampling from a first frame | the real continuation is the reference |
+| `step_sweep` | generation repeated at each `K`, under the blur control | as above, per `(K, sigma)` cell |
+
 
 ```
 /data/experiments/phaselock_geophys/
 ├── wan21_t2v_1_3b/
 │   └── likephys/
-│       └── detection/
+│       └── inversion/
 │           ├── config.json  statistics.csv  signals.csv  reconstruction.json
 │           ├── external/          external_statistics.csv  external_signals.csv
 │           ├── external_latent/   the same, temporally pooled to the latent grid
@@ -421,7 +433,7 @@ than leaving it to a naming convention:
 │           └── videos/            see the table below
 ├── cogvideox_5b_i2v/
 │   └── likephys/
-│       ├── detection/     same shape as above
+│       ├── inversion/     same shape as above
 │       ├── generation/    config.json  candidates.csv  selection.csv  videos/
 │       └── step_sweep/    config.json  sweep.csv
 └── _archive/              superseded smoke and gate runs, kept for provenance
@@ -430,7 +442,7 @@ than leaving it to a naming convention:
 The two path segments — `backend` and `dataset` under `output` — are filled in
 automatically from `backend.name` and `data.name`, so no config repeats itself; set them
 by hand only to deliberately file a run elsewhere. `output.name` is the stage plus any
-variant: `detection`, `detection_pilot6`, `generation`.
+variant: `inversion`, `inversion_pilot`, `generation`.
 
 Two runs sharing a full path **append** to `statistics.csv` — which is what makes resuming
 work, but means a config change under the same name silently mixes settings. Change
@@ -445,9 +457,9 @@ same thing under two names.
 
 | file | stage | left panel | right panel | the question it answers |
 |---|---|---|---|---|
-| `*_pair.mp4` | detection | plausible clip | violated clip | Did the violation survive preprocessing? If the two look identical, no statistic downstream can recover it. |
-| `*_inversion.mp4` | detection | original, then one panel per recorded step | — | How fast does the model's clean estimate stop tracking the real motion as the trajectory walks toward noise? |
-| `*_roundtrip.mp4` | detection | original, VAE-only, inverted | — | Did inversion return to the video it came from? The middle panel is the ceiling. |
+| `*_pair.mp4` | inversion | plausible clip | violated clip | Did the violation survive preprocessing? If the two look identical, no statistic downstream can recover it. |
+| `*_inversion.mp4` | inversion | original, then one panel per recorded step | — | How fast does the model's clean estimate stop tracking the real motion as the trajectory walks toward noise? |
+| `*_roundtrip.mp4` | inversion | original, VAE-only, inverted | — | Did inversion return to the video it came from? The middle panel is the ceiling. |
 | `*_generation.mp4` | generation | real continuation | generated | Both start from the same first frame, so column 0 should match; later divergence is the model's own dynamics. |
 | `*_raw.mp4` | generation | the generation alone | — | The output on its own, for anything downstream that needs it unannotated. |
 
