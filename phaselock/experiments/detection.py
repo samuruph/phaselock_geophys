@@ -207,23 +207,25 @@ def save_visuals(
     directory: Path,
     video_steps: int = 6,
 ) -> list[Path]:
-    """Write videos and contact sheets so a run can be looked at, not just trusted.
+    """Write videos so a run can be looked at, not just trusted.
 
-    Both formats, because they answer different questions. The mp4s are the ones to
-    watch: most LikePhys violations are purely temporal -- a freeze, a jitter, a shuffled
-    segment -- and simply do not exist in sampled stills. The sheets stay because a still
-    can be put in a document and scrubbed frame by frame.
+    Videos only. Most LikePhys violations are purely temporal -- a freeze, a jitter, a
+    shuffled segment -- and simply do not exist in sampled stills, which is what the
+    contact sheets these replaced could show.
 
-    Three artifacts per pair:
+    Two per pair:
 
     * ``_pair.mp4`` -- plausible and violated side by side on one clock. Does the
       violation survive preprocessing at all?
-    * ``_inversion.mp4`` -- the model's clean estimate at each recorded step, all panels
-      playing together, so the trajectory's decay is visible as motion. Decoding the
-      noisy latent instead would show noise at every step and answer nothing.
-    * ``_inversion.png`` -- the round trip against the VAE ceiling, with PSNR.
+    * ``_inversion.mp4`` -- the original, then the model's clean estimate at each
+      recorded step, all panels playing together, so the trajectory's decay is visible
+      as motion. Decoding the noisy latent instead would show noise at every step and
+      answer nothing.
+
+    The reconstruction PSNR that the old sheet carried is logged instead, and
+    ``reconstruction_check`` records it per run.
     """
-    from ..analysis import video, visuals
+    from ..analysis import video
     from ..metrics.motion_mask import psnr
     from ..pipelines.inversion import resample
 
@@ -239,10 +241,6 @@ def save_visuals(
     stem = pair.violated.sample_id.replace("/", "_")
     written.append(video.pair_video(
         plausible, violated, directory / f"{stem}_pair.mp4",
-        scenario=pair.scenario, violation=pair.violation,
-    ))
-    written.append(visuals.pair_sheet(
-        plausible, violated, directory / f"{stem}_pair.png",
         scenario=pair.scenario, violation=pair.violation,
     ))
 
@@ -268,10 +266,16 @@ def save_visuals(
         resample(backend, noise, num_steps=config.inversion.num_steps,
                  prompt=config.inversion.prompt)
     ).cpu()
-    written.append(visuals.inversion_sheet(
-        plausible, vae_only, recovered, directory / f"{stem}_inversion.png",
-        sample_id=pair.plausible.sample_id,
-        psnr_vae=psnr(vae_only, plausible), psnr_inversion=psnr(recovered, plausible),
+    # The middle panel is the ceiling: no inversion can beat what the VAE alone keeps.
+    # Comparing against it separates "the inversion lost this" from "the VAE never had
+    # it", which a single PSNR cannot.
+    written.append(video.write_grid(
+        {
+            "original": plausible,
+            f"VAE only  {psnr(vae_only, plausible):.1f} dB": vae_only,
+            f"inverted  {psnr(recovered, plausible):.1f} dB": recovered,
+        },
+        directory / f"{stem}_roundtrip.mp4",
     ))
     return written
 

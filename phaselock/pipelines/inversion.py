@@ -169,7 +169,11 @@ def invert(
             if wanted:
                 probe.capture(len(recorded), state)
                 if on_record is not None:
-                    on_record(len(recorded), float(levels[index]), state)
+                    # state.tau, not levels[index]: the latter is the backend's raw
+                    # scheduler level, which is a 0-1000 timestep for Wan and a sigma
+                    # elsewhere. tau is the common coordinate the rest of the pipeline
+                    # records, so callbacks and stored statistics agree.
+                    on_record(len(recorded), state.tau, state)
                 recorded.append(float(levels[index]))
 
             # Explicit step: evaluate at the known endpoint, then move up one level.

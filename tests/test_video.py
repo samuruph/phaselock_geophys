@@ -33,8 +33,8 @@ def test_grid_writes_a_readable_mp4(tmp_path):
     assert len(frames) == 6
     # Two panels wide plus the gutter, one label band tall, rounded up to even so
     # the codec does not crop.
-    assert frames[0].shape[1] == 48 * 2 + 3 + 1
-    assert frames[0].shape[0] == 32 + video._LABEL_BAND
+    assert frames[0].shape[1] == 48 * 2 + 4
+    assert frames[0].shape[0] == 32 + video._band_height(48)
 
 
 def test_short_clips_hold_their_last_frame(tmp_path):
@@ -48,7 +48,7 @@ def test_short_clips_hold_their_last_frame(tmp_path):
     frames = read(path)
     assert len(frames) == 8
 
-    band = video._LABEL_BAND
+    band = video._band_height(48)
     right = frames[-1][band:, 48 + 3 :]
     assert right.mean() > 200, "short panel went dark instead of holding"
 
@@ -69,8 +69,8 @@ def test_pair_video_puts_the_two_clips_side_by_side(tmp_path):
         scenario="ball_drop", violation="penetration",
     )
     frame = read(path)[0]
-    band = video._LABEL_BAND
-    left, right = frame[band:, :48], frame[band:, 48 + 3 :]
+    band = video._band_height(48)
+    left, right = frame[band:, :48], frame[band:, 48 + 4 :]
     assert left.mean() > 200 and right.mean() < 55, "panels are not in the expected order"
 
 
@@ -78,12 +78,28 @@ def test_inversion_video_has_one_panel_per_step_plus_the_original(tmp_path):
     steps = [(0.0, clip()), (0.5, clip()), (1.0, clip())]
     path = video.inversion_video(steps, tmp_path / "i.mp4", original=clip())
     frame = read(path)[0]
-    assert frame.shape[1] == 48 * 4 + 3 * 3 + 1
+    assert frame.shape[1] == 48 * 4 + 4 * 3
 
 
 def test_inversion_video_columns_wrap_into_rows(tmp_path):
     steps = [(t / 4, clip()) for t in range(4)]
     path = video.inversion_video(steps, tmp_path / "i.mp4", columns=2)
     frame = read(path)[0]
-    assert frame.shape[1] == 48 * 2 + 3 + 1
-    assert frame.shape[0] == (32 + video._LABEL_BAND) * 2 + 3 + 1
+    assert frame.shape[1] == 48 * 2 + 4
+    assert frame.shape[0] == (32 + video._band_height(48)) * 2 + 4
+
+
+def test_panels_are_captioned_with_the_diffusion_timestep(tmp_path, monkeypatch):
+    """tau is the shared coordinate (1 = clean), and panels show the timestep.
+
+    Regression: the callback used to hand out the backend's raw scheduler level, which
+    is a 0-1000 timestep for Wan, so the caption computed (1 - 1000) * 1000 and read
+    't=-999000'. Anything captioned off tau must agree with what statistics.csv stores.
+    """
+    seen = {}
+    monkeypatch.setattr(
+        video, "write_grid",
+        lambda clips, path, **kw: (seen.update(names=list(clips), subs=kw.get("subtitles")), path)[1],
+    )
+    video.inversion_video([(1.0, clip()), (0.007, clip())], tmp_path / "i.mp4")
+    assert seen["names"] == ["t=0", "t=993"], seen["names"]

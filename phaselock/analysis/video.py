@@ -21,8 +21,20 @@ import torch
 
 # Drawn in pixel space on the tiled frame, so they stay legible whatever the source size.
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
-_LABEL_BAND = 26
-_GUTTER = 3
+_GUTTER = 4
+
+_MIN_SCALE = 0.9
+"""Font scale floor. Panels are tiled side by side and the result is usually viewed
+shrunk to fit a window, so a caption sized for the panel's own pixels ends up unreadable.
+These are sized to survive being halved."""
+
+
+def _band_height(width: int) -> int:
+    return max(34, int(round(width * 0.075)))
+
+
+def _font_scale(width: int) -> float:
+    return max(_MIN_SCALE, min(1.5, width / 470))
 
 
 def _to_uint8(frames: torch.Tensor) -> np.ndarray:
@@ -35,14 +47,22 @@ def _label(panel: np.ndarray, text: str, sub: str = "") -> np.ndarray:
 
     Text burned onto the video would sit on top of exactly the pixels being judged.
     """
-    height, width = panel.shape[:2]
-    band = np.full((_LABEL_BAND, width, 3), 22, dtype=np.uint8)
-    scale = max(0.34, min(0.52, width / 620))
-    cv2.putText(band, text, (6, 17), _FONT, scale, (245, 245, 245), 1, cv2.LINE_AA)
+    width = panel.shape[1]
+    height = _band_height(width)
+    scale = _font_scale(width)
+    band = np.full((height, width, 3), 22, dtype=np.uint8)
+
+    pad = max(8, width // 60)
+    baseline = int(height * 0.68)
+    thickness = 2 if scale >= 1.0 else 1
+    cv2.putText(band, text, (pad, baseline), _FONT, scale, (245, 245, 245),
+                thickness, cv2.LINE_AA)
     if sub:
-        size = cv2.getTextSize(sub, _FONT, scale * 0.82, 1)[0]
-        cv2.putText(band, sub, (width - size[0] - 6, 17), _FONT, scale * 0.82,
-                    (150, 150, 150), 1, cv2.LINE_AA)
+        size = cv2.getTextSize(sub, _FONT, scale * 0.8, 1)[0]
+        # Drop the subtitle rather than let it collide with the title.
+        if size[0] + pad * 3 + cv2.getTextSize(text, _FONT, scale, thickness)[0][0] < width:
+            cv2.putText(band, sub, (width - size[0] - pad, baseline), _FONT, scale * 0.8,
+                        (155, 155, 155), 1, cv2.LINE_AA)
     return np.concatenate([band, panel], axis=0)
 
 
@@ -96,14 +116,50 @@ def write_grid(
     subtitles = subtitles or {}
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    writer = None
-    try:
-        for index in range(length):
-            panels = [
+    frames = (
+        _tile(
+            [
                 _label(array[min(index, array.shape[0] - 1)], name, subtitles.get(name, ""))
                 for name, array in arrays.items()
-            ]
-            frame = _tile(panels, columns)
+            ],
+            columns,
+        )
+        for index in range(length)
+    )
+    _encode(frames, path, fps)
+    return path
+
+
+def _encode(frames, path: Path, fps: int) -> None:
+    """Write H.264, falling back to OpenCV's MPEG-4 only if ffmpeg is missing.
+
+    The codec is not cosmetic. OpenCV's default ``mp4v`` is MPEG-4 Part 2, which
+    Chromium cannot decode, so the file plays in VLC but shows up blank in a VS Code
+    tab, a browser, or anything else Electron-based -- the exact places these get
+    looked at. imageio-ffmpeg ships a static ffmpeg binary, so H.264 needs no system
+    package.
+    """
+    try:
+        import imageio.v2 as imageio
+    except ImportError:  # pragma: no cover - exercised only where ffmpeg is absent
+        imageio = None
+
+    if imageio is not None:
+        writer = imageio.get_writer(
+            str(path), fps=fps, codec="libx264", quality=8,
+            pixelformat="yuv420p",  # required for browser playback
+            macro_block_size=1,  # dimensions are already even; do not pad them again
+        )
+        try:
+            for frame in frames:
+                writer.append_data(frame)
+        finally:
+            writer.close()
+        return
+
+    writer = None  # pragma: no cover - fallback path
+    try:
+        for frame in frames:
             if writer is None:
                 writer = cv2.VideoWriter(
                     str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
@@ -115,7 +171,6 @@ def write_grid(
     finally:
         if writer is not None:
             writer.release()
-    return path
 
 
 def pair_video(
@@ -159,12 +214,18 @@ def inversion_video(
     noise. Where it stops tracking the real motion is where the physical content of the
     trajectory has been destroyed.
 
-    ``steps`` is ``(tau, frames)`` per recorded point, tau = 0 clean and 1 pure noise.
+    ``steps`` is ``(tau, frames)`` per recorded point, on the pipeline's shared
+    coordinate ``tau = 1 - timestep/1000``: tau = 1 is clean data, tau = 0 is pure noise.
+    Panels are captioned with the diffusion timestep itself rather than a step counter,
+    so a panel can be matched against a row of ``statistics.csv``.
     """
     clips: dict[str, torch.Tensor] = {}
     if original is not None:
         clips["original"] = original
+    label = lambda tau: f"t={round((1.0 - tau) * 1000)}"
     for tau, frames in steps:
-        clips[f"t={round((1.0 - tau) * 1000)}"] = frames
-    subtitles = {f"t={round((1.0 - tau) * 1000)}": f"{kind}  s={tau:.2f}" for tau, _ in steps}
-    return write_grid(clips, path, fps=fps, columns=columns, subtitles=subtitles)
+        clips[label(tau)] = frames
+    return write_grid(
+        clips, path, fps=fps, columns=columns,
+        subtitles={label(tau): kind for tau, _ in steps},
+    )
