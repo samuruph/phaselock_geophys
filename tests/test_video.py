@@ -103,3 +103,38 @@ def test_panels_are_captioned_with_the_diffusion_timestep(tmp_path, monkeypatch)
     )
     video.inversion_video([(1.0, clip()), (0.007, clip())], tmp_path / "i.mp4")
     assert seen["names"] == ["t=0", "t=993"], seen["names"]
+
+
+def test_encoder_writes_h264_not_mpeg4(tmp_path):
+    """The codec is load-bearing, not cosmetic.
+
+    OpenCV's default mp4v is MPEG-4 Part 2, which Chromium cannot decode -- so the file
+    plays in VLC and renders as green mush in a VS Code tab or a browser, which is where
+    these actually get looked at.
+    """
+    import subprocess
+
+    imageio_ffmpeg = pytest.importorskip("imageio_ffmpeg")
+    path = video.write_grid({"a": clip(height=64, width=64)}, tmp_path / "c.mp4")
+    probe = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(path)], capture_output=True, text=True
+    ).stderr
+    stream = next(line for line in probe.splitlines() if "Video:" in line)
+    assert "h264" in stream, stream
+    assert "yuv420p" in stream, stream
+
+
+def test_save_video_shares_the_same_encoder(tmp_path):
+    """Regression: generation wrote through save_video and kept the unplayable codec
+    long after the analysis videos were fixed."""
+    import subprocess
+
+    imageio_ffmpeg = pytest.importorskip("imageio_ffmpeg")
+    from phaselock.datasets.video_io import save_video
+
+    path = tmp_path / "g.mp4"
+    save_video(torch.rand(8, 3, 64, 64), str(path), fps=8)
+    probe = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(path)], capture_output=True, text=True
+    ).stderr
+    assert "h264" in next(line for line in probe.splitlines() if "Video:" in line)

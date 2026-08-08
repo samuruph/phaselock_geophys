@@ -39,7 +39,7 @@ carry the signal at all.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 293 tests, CPU only, no weights needed
+python -m pytest tests/ -q          # 294 tests, CPU only, no weights needed
 ```
 
 ## The five statistics

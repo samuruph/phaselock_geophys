@@ -7,6 +7,7 @@ Everything here is deterministic, so two runs over the same clip produce identic
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -143,12 +144,14 @@ def load_video(
 
 
 def save_video(frames: torch.Tensor, path: str, fps: int = 8) -> None:
-    """Write ``(F, 3, H, W)`` in [0, 1] to an mp4."""
+    """Write ``(F, 3, H, W)`` in [0, 1] to an H.264 mp4.
+
+    H.264 rather than OpenCV's default mp4v, which is MPEG-4 Part 2 and cannot be decoded
+    by Chromium -- so those files play in VLC but render as green mush in a VS Code tab or
+    a browser, which is where they actually get looked at. Shares one encoder with the
+    analysis videos so there is a single place this can be got wrong.
+    """
+    from ..analysis.video import encode_frames
+
     array = (frames.clamp(0, 1) * 255).byte().permute(0, 2, 3, 1).cpu().numpy()
-    height, width = array.shape[1:3]
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    try:
-        for frame in array:
-            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-    finally:
-        writer.release()
+    encode_frames(array, Path(path), fps)

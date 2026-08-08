@@ -57,7 +57,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 293 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 294 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
@@ -418,7 +418,7 @@ than leaving it to a naming convention:
 │           ├── external/          external_statistics.csv  external_signals.csv
 │           ├── external_latent/   the same, temporally pooled to the latent grid
 │           ├── figures/           01_source_comparison.png, … , <source>/…
-│           └── videos/            *_pair.mp4  *_inversion.mp4  *_roundtrip.mp4
+│           └── videos/            see the table below
 ├── cogvideox_5b_i2v/
 │   └── likephys/
 │       ├── detection/     same shape as above
@@ -435,6 +435,25 @@ variant: `detection`, `detection_pilot6`, `generation`.
 Two runs sharing a full path **append** to `statistics.csv` — which is what makes resuming
 work, but means a config change under the same name silently mixes settings. Change
 `output.name` when you change anything else.
+
+### What each video is
+
+Every stage writes into its own `videos/`, and the parent path already says which model
+and dataset produced it. The **suffix says what the video shows**, and the suffixes do not
+overlap between stages — a `_pair` and a `_generation` are different comparisons, not the
+same thing under two names.
+
+| file | stage | left panel | right panel | the question it answers |
+|---|---|---|---|---|
+| `*_pair.mp4` | detection | plausible clip | violated clip | Did the violation survive preprocessing? If the two look identical, no statistic downstream can recover it. |
+| `*_inversion.mp4` | detection | original, then one panel per recorded step | — | How fast does the model's clean estimate stop tracking the real motion as the trajectory walks toward noise? |
+| `*_roundtrip.mp4` | detection | original, VAE-only, inverted | — | Did inversion return to the video it came from? The middle panel is the ceiling. |
+| `*_generation.mp4` | generation | real continuation | generated | Both start from the same first frame, so column 0 should match; later divergence is the model's own dynamics. |
+| `*_raw.mp4` | generation | the generation alone | — | The output on its own, for anything downstream that needs it unannotated. |
+
+All are **H.264 / yuv420p**, so they play inline in a VS Code tab or a browser. OpenCV's
+default `mp4v` is MPEG-4 Part 2, which Chromium cannot decode — those files play in VLC
+and render as green mush everywhere else.
 
 ---
 

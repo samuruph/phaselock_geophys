@@ -126,11 +126,11 @@ def write_grid(
         )
         for index in range(length)
     )
-    _encode(frames, path, fps)
+    encode_frames(frames, path, fps)
     return path
 
 
-def _encode(frames, path: Path, fps: int) -> None:
+def encode_frames(frames, path: Path, fps: int) -> None:
     """Write H.264, falling back to OpenCV's MPEG-4 only if ffmpeg is missing.
 
     The codec is not cosmetic. OpenCV's default ``mp4v`` is MPEG-4 Part 2, which

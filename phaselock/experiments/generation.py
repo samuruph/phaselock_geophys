@@ -29,6 +29,7 @@ from ..config import Config
 from ..datasets import VideoSample, load_video, save_video
 from ..datasets.likephys import LikePhys
 from ..metrics.motion_mask import MotionMaskScores, motion_mask_scores
+from ..analysis import video
 from ..pipelines.generation import generate_with_probes
 from ..probes.trajectory import ProbeRecord
 
@@ -145,8 +146,22 @@ def generate_candidate(
 
     path = None
     if video_dir is not None:
-        path = str(video_dir / f"{sample.sample_id.replace('/', '_')}_k{steps}_s{seed}.mp4")
-        save_video(generated, path, fps=backend.spec.default_fps)
+        # Named `_generation.mp4` to sit alongside detection's `_pair` / `_inversion` /
+        # `_roundtrip`, so a videos/ directory reads the same whichever stage produced it,
+        # with the run's model and dataset already carried by the parent path.
+        stem = f"{sample.sample_id.replace('/', '_')}_k{steps}_s{seed}"
+        # Side by side against the real continuation rather than alone. A generated clip
+        # on its own cannot be judged -- the question is always whether its *motion*
+        # matches what actually happened from the same first frame, and both arms start
+        # from that frame, so column 0 should agree and any later divergence is the
+        # model's own dynamics.
+        path = str(video.write_grid(
+            {"real (reference)": reference, f"generated  k={steps}": generated},
+            Path(video_dir) / f"{stem}_generation.mp4",
+            fps=backend.spec.default_fps, columns=2,
+        ))
+        save_video(generated, str(Path(video_dir) / f"{stem}_raw.mp4"),
+                   fps=backend.spec.default_fps)
 
     return Candidate(
         sample_id=sample.sample_id,
