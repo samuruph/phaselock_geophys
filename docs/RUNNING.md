@@ -3,10 +3,17 @@
 Operational guide: exact commands, what each stage does, what it reads and writes, and how
 to read the output. For *why* each quantity is measured, see [METHOD.md](METHOD.md).
 
-> **Status.** Every stage below is implemented and covered by 281 CPU tests, but **no GPU
-> run has completed yet**, so no timings here are measured — they are step-count
-> arithmetic, labelled as estimates. The pilot in Stage 0 exists to replace them with real
-> numbers on your box.
+> **Status.** Measured on one L40S (46 GB). The timings below are real, not estimates.
+>
+> | | measured |
+> |---|---|
+> | Wan2.1-1.3B transformer forward, 81f @ 480x832 | 2.2 s |
+> | inversion, 50 steps, per clip | **110 s** |
+> | statistics + flow coupling, per clip (30 blocks x 10 steps) | 0.8 s |
+> | DINOv2 gate, 920 clips | 13 min |
+>
+> Detection cost is `distinct clips x 110 s`. Note LikePhys shares one valid clip across a
+> subgroup, so 96 pairs is 173 clips, not 192.
 
 ---
 
@@ -22,6 +29,21 @@ Each stage depends on the one before it being believable.
 | 3 | report | `report.py <run_dir> --figures` | no | turns CSVs into tables and heatmaps |
 | 4 | generation | `run_generation.py --config .../generation_likephys.yaml` | yes | Stage 6 |
 | 5 | step sweep | `run_step_sweep.py --config .../step_sweep_likephys.yaml` | yes | Stage 7, with the blur control |
+
+**Why Wan for detection.** Inversion fidelity is the load-bearing assumption of the whole
+track: the internal states only mean something if the recovered trajectory is the one the
+model would actually have taken. Measured on the same LikePhys clip:
+>
+| backend | VAE floor | round-trip rel err | reconstruction |
+|---|---|---|---|
+| CogVideoX-5B (DDIM) | 49.0 dB | 0.635 | 9.1 dB |
+| Wan2.1-1.3B (flow matching) | 51.1 dB | **0.030** | **43.9 dB** |
+>
+DDIM inversion of a Blender render — far off CogVideoX's training distribution — loses
+most of the signal. The flow-matching inversion lands within 8 dB of the VAE ceiling. Wan
+is also the model "The Invisible Hand of Physics" found most decodable, and at 1.3B it is
+cheaper. CogVideoX is kept for generation, where it is used forward and inversion never
+enters.
 
 Stage 1 is not optional. It runs the same five statistics on frozen DINOv2 features — the
 representation GeoPhys designed them for — and must land near the published **77.6–80.8%**
@@ -50,9 +72,9 @@ python -m pytest tests/ -q          # 281 tests, CPU only, no weights, ~2 s
 
 | backend | source | note |
 |---|---|---|
-| `cogvideox_5b_t2v` | `/data/weights/CogVideoX-5b-Diffusers` | inversion default — T2V, so no image conditioning to confound the trajectory |
-| `cogvideox_5b_i2v` | `THUDM/CogVideoX-5B-I2V` (HF cache) | generation default |
-| `wan21_t2v_1_3b` | `/data/weights/Wan2.1-T2V-1.3B-Diffusers` | validated path |
+| `wan21_t2v_1_3b` | `/data/weights/Wan2.1-T2V-1.3B-Diffusers` | **detection default** — see below |
+| `cogvideox_5b_i2v` | `THUDM/CogVideoX-5B-I2V` (HF cache) | generation default (I2V) |
+| `cogvideox_5b_t2v` | `/data/weights/CogVideoX-5b-Diffusers` | available, but a poor inverter here |
 | `wan21_*_14b*` | HF | **registered but unvalidated** — will not fit a 46 GB card |
 | DINOv2 | `facebook/dinov2-large` (~2.4 GB, auto-downloads) | the correctness gate |
 

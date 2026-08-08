@@ -1,13 +1,28 @@
 # GPU bring-up and validation plan
 
-Everything in this repo is covered by 281 CPU tests, but **no line of GPU code has ever run
-to completion**. This is the plan to change that: what to fix first, the order to bring
-things up, what each step must produce to count as passing, and what to do when it does not.
+> **Outcome (executed).** The ladder was run. Every rung passed, after four real bugs that
+> only a GPU run could surface. Recorded here rather than rewritten away, because the
+> failures are the useful part.
+>
+> | # | bug | how it presented | why it was hard |
+> |---|---|---|---|
+> | 1 | `Tensor.to(dtype, device=…)` — not a valid overload | raised in the VAE encode | looked like a model bug |
+> | 2 | `vae.device` reads `cpu` under CPU offload while accelerate runs it on GPU | device mismatch | the obvious fix (reorder the args) is still wrong |
+> | 3 | system CUDA shadowing torch's `libcublasLt.so.13` | **process abort** inside the VAE encode | a plain `torch.matmul` succeeds, so the obvious smoke test misses it; and the abort spent minutes writing a core dump, so a hard crash looked like a hang |
+> | 4 | **inversion never advanced** — renoising to the level just evaluated at is the identity | reconstruction PSNR *identical* at k=20/50/100 | the oracle test passed throughout, for the wrong reason |
+>
+> Bug 4 is the one that mattered. `(x0, eps)` are derived from `z` at level `s`, so
+> recombining them at `s` reconstructs `z` exactly — the loop returned the clean latent
+> untouched and every recorded trajectory was one point repeated. It was caught not by a
+> test but by the *shape of the numbers*: a reconstruction that does not change with step
+> count is not being integrated.
+>
+> The gate outcomes are in [RESULTS.md](RESULTS.md).
 
-Two GPU smoke attempts have run so far. Both died before finishing, but both earned their
-keep — they found `Tensor.to(dtype, device=...)` (not a valid overload) and the fact that
-`vae.device` reports `cpu` under `enable_model_cpu_offload` while accelerate executes the
-module on the GPU. Expect more of that class of bug below.
+---
+
+This is the plan as written before execution: what to fix first, the order to bring things
+up, what each step must produce to count as passing, and what to do when it does not.
 
 ---
 
