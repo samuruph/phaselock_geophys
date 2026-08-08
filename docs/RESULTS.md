@@ -6,9 +6,8 @@ Written against run `detection_likephys_wan`, 2026-08-08. Every number here is
 reproducible from `/data/experiments/phaselock_geophys/detection_likephys_wan` with
 `python scripts/report.py <run_dir> --figures`.
 
-> **Status.** Stage 5 (detection on labelled pairs) is complete. Stages 6–8 (generation,
-> step sweep, IntPhys2) have not run. The DINOv2 comparison is being re-run in a
-> temporally matched form; see [Threats](#threats-to-these-conclusions).
+> **Status.** Stage 5 (detection on labelled pairs) is complete, including the temporally
+> matched DINOv2 baseline. Stages 6–8 (generation, step sweep, IntPhys2) have not run.
 
 ---
 
@@ -151,6 +150,17 @@ Pairwise accuracy, mean ± s.d. across probe cells, `n = 96` pairs.
 Best single cell overall: **hidden states, block 6, step 4, `φ_accel` — 85.4%**
 [77.1, 92.7], against a 68.8% selection floor, `p < 0.0001`.
 
+### The same five on the external DINOv2 baseline
+
+Temporally matched: DINOv2 features averaged over each latent's 4 video frames, so both
+paths have 21 trajectory points with the same spacing. Same 96 pairs. 25 readout layers.
+
+| source | φ_perr | φ_accel | φ_curv | φ_ang | φ_speed |
+|---|---|---|---|---|---|
+| **DINOv2-large** (25 cells/stat) | 54.4 ± 4.9 | 63.9 ± 8.1 | 63.5 ± 5.1 | 64.5 ± 4.0 | **65.4 ± 6.7** |
+
+Best DINOv2 cell: layer 7, `φ_speed`, **74.0%** over 125 cells.
+
 ### The three new metrics
 
 | metric | best source | mean | best cell |
@@ -174,15 +184,39 @@ like that.
 `φ_accel` reaches a higher single cell (85.4%) but varies far more (±6.7), so it is the
 more selection-sensitive of the two.
 
-### 5.2 Two of the five statistics are actively harmful internally
+### 5.2 The five statistics swap roles between representations
 
 `φ_speed` lands **below chance on every internal source** — 43.7%, 37.7%, 42.2%, 46.5%.
 Below chance is not noise; it means the ranking is systematically inverted, and violated
 clips have *more regular* pooled step sizes than plausible ones. `φ_curv` and `φ_ang` sit
-at chance.
+at chance internally.
 
-So the GeoPhys five do not transfer as a set. Two transfer (`φ_perr`, `φ_accel`), one
-inverts, two vanish.
+On DINOv2, at the same 21-point temporal resolution, the ordering is almost exactly
+reversed:
+
+| statistic | DiT hidden states | DINOv2 |
+|---|---|---|
+| `φ_perr` | **72.1** | 54.4 *(its worst)* |
+| `φ_accel` | 66.7 | 63.9 |
+| `φ_ang` | 49.4 | 64.5 |
+| `φ_curv` | 49.3 | 63.5 |
+| `φ_speed` | 43.7 *(its worst)* | **65.4** |
+
+Each representation's **best** statistic is close to the other's **worst**. This was
+initially suspicious — the unpooled DINOv2 run was 4× finer in time, and `φ_speed` is the
+statistic most sensitive to sampling rate — so it could have been a pooling artifact. It
+is not: the table above is temporally matched.
+
+DINOv2 also spreads its signal fairly evenly across four statistics (63.5–65.4), while the
+internal path concentrates it in one (72.1) and actively harms itself with another. The
+GeoPhys five are not a portable set; *which* geometric channel carries plausibility is a
+property of the representation, not of physics.
+
+A plausible reading, not tested here: DINOv2 features encode appearance, so a trajectory
+through them moves when the *image* changes, and irregular image change reads as
+irregular motion — which `φ_speed` measures directly. Diffusion internals are optimised to
+predict the next state, so their trajectory is closer to a dynamical model, and what
+breaks under implausible physics is *predictability* — which is what `φ_perr` measures.
 
 ### 5.3 The VAE latent is not physics-free
 
@@ -260,14 +294,11 @@ the fully-noised ends.
 
 Listed worst-first.
 
-1. **The internal-versus-external comparison is not yet valid.** The DINOv2 numbers in the
-   current figures are computed per *video frame*, giving 81 trajectory points, while the
-   internal path gives 21 latent points. Every statistic depends on trajectory length and
-   spacing. A temporally matched run (`--temporal-pool latent`, averaging DINOv2 features
-   over each latent's 4 frames) is in progress; until it lands, **no claim that internal
-   beats external is supported**. This especially affects §5.2, since `φ_speed` — DINOv2's
-   best statistic and the internal path's worst — is exactly the one most sensitive to
-   sampling rate.
+1. **The internal and external paths select from very different pools.** The matched
+   comparison of *means* (§5.2) is sound. The comparison of *maxima* is not symmetric:
+   the internal best cell is chosen from 1500 candidates and DINOv2's from 125, so the
+   85.4% and 74.0% figures carry different selection burdens even though both clear
+   their own null. Prefer the means when quoting a margin.
 
 2. **Inverted video is not generated video.** GeoPhys evaluates real and generated clips
    through a feature extractor. This stage evaluates *inverted* real clips, which requires
@@ -308,7 +339,15 @@ the VAE latent is smaller than the Invisible Hand's linear-probe results would p
 **Is the coupled-velocity family worth it?** On this evidence, no. Reported as a negative
 result rather than dropped.
 
-**Does internal beat external?** Unanswered until the matched DINOv2 run completes.
+**Does internal beat external?** Yes, on the strongest channel of each, temporally
+matched on the same 96 pairs: **72.1 ± 3.0** (`φ_perr` on hidden states, averaged over 300
+cells) against **65.4 ± 6.7** (`φ_speed` on DINOv2, averaged over 25 layers). The best
+single cells are 85.4% and 74.0%, though those are selected from unequal pools.
+
+The more interesting answer is that the two do not merely differ in strength — they read
+plausibility through *different geometric channels* (§5.2), and each is near-useless in
+the other's channel. That points at combining them rather than choosing between them,
+which nothing here has tested.
 
 ---
 

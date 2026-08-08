@@ -215,3 +215,16 @@ def test_a_perfectly_consistent_signal_is_not_normalised_away():
 
 def test_scale_normalize_of_all_zeros_stays_zero():
     assert list(scale_normalize([0.0, 0.0, 0.0])) == [0.0, 0.0, 0.0]
+
+
+def test_bootstrap_with_no_resamples_returns_the_point_estimate():
+    """Sweeping thousands of cells, a caller may want point estimates only.
+
+    Regression: resamples=0 built an empty draw array and raised an IndexError from
+    inside numpy's quantile, which says nothing about the actual mistake.
+    """
+    from phaselock.metrics.scoring import bootstrap_ci
+
+    # The default statistic is pairwise_accuracy: the fraction of positive deltas.
+    low, high = bootstrap_ci([1.0, 2.0, -3.0, -4.0], resamples=0)
+    assert low == high == 0.5

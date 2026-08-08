@@ -149,6 +149,13 @@ def bootstrap_ci(
     values = np.asarray(values, dtype=np.float64)
     rng = np.random.default_rng(seed)
 
+    # A caller sweeping thousands of cells may want point estimates only. Without this
+    # the empty draw array reaches np.quantile and raises an IndexError from inside numpy
+    # that says nothing about the actual mistake.
+    if resamples <= 0:
+        point = float(statistic(values)) if len(values) else float("nan")
+        return point, point
+
     if groups is None:
         indices = [np.arange(len(values))]
     else:

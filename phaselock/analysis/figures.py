@@ -156,12 +156,18 @@ def source_comparison(
     axis.set_ylim(0, 105)
 
     cells = max((s.n_cells for s in summaries if s.source != "dinov2"), default=0)
+    external_cells = max((s.n_cells for s in summaries if s.source == "dinov2"), default=0)
     note = (
         f"Bar = mean over all {cells} probe cells (block x denoising step) for that source and "
-        "statistic; error bar = 1 s.d. across cells; open diamond = the single best cell. "
-        "DINOv2 cells are its 25 readout layers on 800 pairs, so its floor is lower than the "
-        "band drawn here."
+        "statistic; error bar = 1 s.d. across cells; open diamond = the single best cell."
     )
+    if external_cells:
+        # The two pools differ by an order of magnitude, so the diamonds are not carrying
+        # equal selection burdens even when both clear the same drawn floor.
+        note += (
+            f" A DINOv2 cell is one of its {external_cells} readout layers, so its best is "
+            f"selected from far fewer candidates than an internal best; compare the bars."
+        )
     if null is not None:
         note += "\n" + pooling_note(external_pooling, temporal_ratio)
         note += (
