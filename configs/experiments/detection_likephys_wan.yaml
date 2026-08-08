@@ -1,0 +1,49 @@
+# Stage 5 on Wan2.1-T2V-1.3B. This is the primary detection configuration.
+#
+# Why Wan rather than CogVideoX, measured on a real LikePhys clip:
+#
+#                        VAE floor   round-trip rel err   reconstruction
+#   CogVideoX-5B (DDIM)   49.01 dB          0.635             9.09 dB
+#   Wan2.1-1.3B (flow)    51.11 dB          0.030            43.93 dB
+#
+# Inversion fidelity is the load-bearing assumption of the whole detection track --
+# the internal states are only meaningful if the recovered trajectory is the one the
+# model would actually have taken. DDIM inversion of a Blender render, which is far
+# off CogVideoX's training distribution, loses most of the signal; the flow-matching
+# inversion lands within 8 dB of the VAE ceiling.
+#
+# It is also the model "The Invisible Hand of Physics" found most linearly decodable
+# (81.27% average, 88.90% in its richest block), and at 1.3B it is cheaper than the 5B.
+
+backend:
+  name: wan21_t2v_1_3b
+  dtype: bfloat16
+  offload: false            # 1.3B fits easily; avoids per-call host<->device shuffling
+
+data:
+  name: likephys
+  limit: 96                 # 8 per scenario, balanced across all 12
+  seed: 0
+  window: null              # LikePhys is 2 s; 60 -> 81 frames is a mild upsample
+  blur_sigma: 0.0
+
+probe:
+  sources: [hidden_states, latent, x0_hat, velocity]
+  block_stride: 1           # all 30 blocks; hooks are free, only storage grows
+  pooling: mean
+  record_steps: 10
+  save_trajectories: false
+
+inversion:
+  num_steps: 50             # 43.9 dB reconstruction, against a 51.1 dB VAE ceiling
+  prompt: ""
+  reconstruction_check: true
+
+metrics:
+  ar_order: 3
+  residual_fit: span
+  bootstrap_resamples: 1000
+
+output:
+  root: /data/experiments/phaselock_geophys
+  name: detection_likephys_wan

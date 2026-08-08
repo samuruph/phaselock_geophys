@@ -181,48 +181,26 @@ def heatmaps(rows: list[dict], statistic: str | None, source: str | None, kind: 
 
 
 def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
-    """PNG heatmaps, one per (source, statistic)."""
-    try:
-        import matplotlib
+    """Render the figure set. See phaselock/analysis/figures.py for what each one asks."""
+    from phaselock.analysis import render_all
 
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import numpy as np
-    except ImportError:
-        print("matplotlib not available; skipping figures")
-        return
+    external_rows = load(run_dir / "external" / "external_signals.csv")
+    external = None
+    if external_rows:
+        best = max(external_rows, key=lambda row: float(row["accuracy"]))
+        external = {
+            "source": "dinov2", "block": -1, "step": 0,
+            "statistic": best["statistic"], "kind": "phi",
+            "accuracy": best["accuracy"], "ci_low": best["ci_low"],
+            "ci_high": best["ci_high"], "auc": best.get("auc") or 0.0,
+            "n_pairs": best["n_pairs"],
+        }
 
-    figures = run_dir / "figures"
-    figures.mkdir(parents=True, exist_ok=True)
-
-    grids: dict[tuple[str, str], dict[tuple[int, int], float]] = defaultdict(dict)
-    for row in rows:
-        if row["kind"] == kind:
-            grids[(row["source"], row["statistic"])][(row["block"], row["step"])] = row["accuracy"]
-
-    written = 0
-    for (source, statistic), grid in sorted(grids.items()):
-        blocks = sorted({block for block, _ in grid})
-        steps = sorted({step for _, step in grid})
-        array = np.full((len(blocks), len(steps)), np.nan)
-        for (block, step), accuracy in grid.items():
-            array[blocks.index(block), steps.index(step)] = 100 * accuracy
-
-        figure, axis = plt.subplots(figsize=(1.2 + 0.5 * len(steps), 1.5 + 0.22 * len(blocks)))
-        # Centred on chance, so above and below 50% read differently at a glance.
-        image = axis.imshow(array, aspect="auto", cmap="RdBu_r", vmin=30, vmax=70)
-        axis.set_xticks(range(len(steps)), steps)
-        axis.set_yticks(range(len(blocks)), ["-" if b < 0 else b for b in blocks])
-        axis.set_xlabel("recorded denoising step")
-        axis.set_ylabel("block")
-        axis.set_title(f"{source} / {kind}_{statistic}  (pairwise accuracy %)")
-        figure.colorbar(image, ax=axis)
-        figure.tight_layout()
-        figure.savefig(figures / f"{source}_{kind}_{statistic}.png", dpi=130)
-        plt.close(figure)
-        written += 1
-
-    print(f"wrote {written} heatmaps to {figures}")
+    sweep = load(run_dir / "sweep.csv") or None
+    written = render_all(rows, run_dir / "figures", external=external, sweep=sweep)
+    print(f"\nwrote {len(written)} figures to {run_dir / 'figures'}")
+    for path in written:
+        print(f"  {path.name}")
 
 
 if __name__ == "__main__":

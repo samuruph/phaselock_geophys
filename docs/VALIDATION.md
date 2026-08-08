@@ -1,6 +1,6 @@
 # GPU bring-up and validation plan
 
-Everything in this repo is covered by 263 CPU tests, but **no line of GPU code has ever run
+Everything in this repo is covered by 281 CPU tests, but **no line of GPU code has ever run
 to completion**. This is the plan to change that: what to fix first, the order to bring
 things up, what each step must produce to count as passing, and what to do when it does not.
 
