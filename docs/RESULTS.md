@@ -12,32 +12,74 @@ filed under `<backend>/<dataset>/<stage>/` so the path carries the provenance.
 |---|---|---|---|---|---|
 | §3–§6 (everything below) | **Wan2.1-T2V-1.3B** | T2V, inversion | LikePhys, 96 pairs | detection | **complete** |
 | §3 external baseline | DINOv2-large (frozen) | encoder, no diffusion | LikePhys, 96 pairs | detection | **complete** |
-| — | CogVideoX-5B-I2V | I2V, inversion | LikePhys | detection | in progress |
-| — | CogVideoX-5B-I2V | I2V, generation | LikePhys | generation | in progress |
+| §7 (secondary) | CogVideoX-5B-I2V | I2V, inversion | LikePhys, 12 pairs | detection | in progress |
+| §7 (secondary) | CogVideoX-5B-I2V | I2V, generation | LikePhys, 6 clips | generation | in progress |
 
 Written 2026-08-08 against
 `/data/experiments/phaselock_geophys/wan21_t2v_1_3b/likephys/detection`, reproducible with
 `python scripts/report.py <run_dir> --figures`.
 
+### Reading the fidelity numbers: dB, and the "VAE ceiling"
+
+These two terms carry a lot of weight below, so they are worth pinning down.
+
+**dB here is PSNR** — one number for "how close are these two videos". Higher is better,
+and the scale is logarithmic, so every 6 dB is roughly a halving of the error. It is not
+linear and not a percentage: 40 dB is not "twice as good" as 20 dB, it is about 100× less
+error. Rough reading, for 8-bit video:
+
+| dB | what it looks like |
+|---|---|
+| 45+ | indistinguishable by eye |
+| 35–45 | very good; differences visible only side by side |
+| 25–35 | recognisably the same video, visibly degraded |
+| 15–25 | heavy corruption, content still identifiable |
+| < 10 | essentially unrelated to the original |
+
+**The VAE ceiling** is the best score any of this could possibly achieve. Before the
+diffusion model sees anything, the video is compressed into latents by the VAE and
+decompressed back. That round trip alone is lossy. Encode-then-decode with *no inversion at
+all* gives the ceiling — around 47–51 dB here. No amount of good inversion can beat it,
+because every path goes through the same VAE.
+
+So there are three numbers, and the third is the one that matters:
+
+- **VAE ceiling** — encode → decode. The floor of achievable loss.
+- **inversion** — encode → invert to noise → sample back → decode. Includes the VAE loss
+  *plus* whatever the inversion got wrong.
+- **gap** = ceiling − inversion. **This is what inversion itself cost**, with the VAE's
+  contribution removed. A small gap means the recovered trajectory really does return to
+  the video it came from.
+
+Judge inversion by the *gap*, not the absolute dB — a backend with a worse VAE would show
+a lower absolute number without its inversion being any worse.
+
 ### Why detection runs on Wan and generation on CogVideoX
 
-Not a preference — a measured constraint. Inversion fidelity is load-bearing for
-detection, and DDIM inversion of a Blender render is far off CogVideoX's training
-distribution. On the same LikePhys clip:
+Not a preference — a measured constraint. Inversion fidelity is load-bearing for detection:
+the recorded internal states only mean something if the recovered trajectory is the one the
+model would actually have taken. Measured on the same LikePhys clip:
 
-| backend | VAE ceiling | inversion | gap |
-|---|---|---|---|
-| CogVideoX-5B-T2V (DDIM) | 47.4 dB | **6.9 dB** | 40.5 dB |
-| Wan2.1-1.3B (flow matching) | 51.1 dB | **43.9 dB** | 7.2 dB |
+| backend | VAE ceiling | inversion | **gap** | verdict |
+|---|---|---|---|---|
+| CogVideoX-5B-T2V (DDIM) | 47.4 dB | 6.9 dB | **40.5 dB** | unusable — output is noise |
+| CogVideoX-5B-I2V (DDIM) | 47.4 dB | 30.1 dB | **17.3 dB** | usable, visibly degraded |
+| Wan2.1-1.3B (flow matching) | 51.1 dB | 43.9 dB | **7.2 dB** | good |
+
+Two things follow. Wan is much the better inverter, which is why the main detection result
+is measured there. And **conditioning on the first frame rescues CogVideoX inversion** —
+6.9 → 30.1 dB — which is what makes a CogVideoX detection run worth doing at all, and is
+why it uses the I2V checkpoint rather than T2V.
 
 Generation needs image-to-video, and the only I2V checkpoint that fits a 46 GB card is
 CogVideoX-5B-I2V — Wan's I2V is 14B. Generation runs the model *forward*, so inversion
-fidelity never enters and the constraint above does not apply. The cost is that detection
-and generation sit on different models, which is why a CogVideoX-5B-I2V detection run is
-in progress: without it, Stage 6 would have to pick its verifier from Wan numbers.
+fidelity never enters there and the constraint above does not apply. The cost is that
+detection and generation would otherwise sit on different models; the CogVideoX-5B-I2V
+detection run exists to close that gap, so Stage 6 can pick its verifier from numbers
+measured on its own model.
 
-> **Status.** Stage 5 (detection on labelled pairs) is complete, including the temporally
-> matched DINOv2 baseline. Stages 6–8 (generation, step sweep, IntPhys2) have not run.
+> A 17.3 dB gap is still large. CogVideoX internal numbers are therefore reported as a
+> **secondary** track throughout, with that caveat attached, and Wan remains the primary.
 
 ---
 

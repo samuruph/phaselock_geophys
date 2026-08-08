@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-only", action="store_true", help="skip extraction, score the existing CSV")
     parser.add_argument("--top", type=int, default=25, help="how many signals to print")
     parser.add_argument("--save-visuals", type=int, default=0, metavar="N",
-                        help="write contact sheets for the first N pairs, to inspect by eye")
+                        help="write side-by-side mp4s for the first N pairs, to inspect by eye")
     parser.add_argument("overrides", nargs="*", help="section__key=value overrides")
     return parser.parse_args()
 
