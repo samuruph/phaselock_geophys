@@ -130,13 +130,12 @@ def source_comparison(
             positions + offset, bests, marker="D", s=13, zorder=5,
             facecolors="none", edgecolors=palette.TEXT_SECONDARY, linewidths=0.9,
         )
-        for x, mean, std, best in zip(positions + offset, means, stds, bests):
-            if np.isnan(mean):
+        for x, best in zip(positions + offset, bests):
+            if np.isnan(best):
                 continue
-            # Just above the bar top, below the error bar, so the two do not fight.
-            # Offset sideways: centred, it lands on the error-bar whisker.
-            axis.text(x + width * 0.42, mean, f"{mean:.0f}", ha="left", va="center",
-                      fontsize=6.4, color=palette.TEXT_SECONDARY, zorder=6)
+            # Only the max is labelled here. Nine sources x seven statistics leaves no
+            # room for two numbers per bar; the mean is already the bar height, and the
+            # per-statistic figure carries both.
             axis.text(x, best + 1.4, f"{best:.0f}", ha="center", va="bottom",
                       fontsize=5.6, color=palette.TEXT_MUTED, zorder=6)
 

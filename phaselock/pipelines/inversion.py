@@ -23,11 +23,17 @@ necessary but nowhere near sufficient, which is why the step count is swept.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 import torch
 
-from ..backends.base import VideoBackend, from_canonical, to_canonical, token_grid
+from ..backends.base import (
+    DenoiserState,
+    VideoBackend,
+    from_canonical,
+    to_canonical,
+    token_grid,
+)
 from ..probes.pooling import PoolMode
 from ..probes.recorder import ProbeRecorder
 from ..probes.trajectory import ProbeRecord
@@ -77,6 +83,7 @@ def invert(
     prompt: str = "",
     conditioning: Optional[dict[str, Any]] = None,
     provenance: Optional[dict[str, Any]] = None,
+    on_record: Optional[Callable[[int, float, DenoiserState], None]] = None,
 ) -> InversionResult:
     """Invert a real video and record the internal states along the way.
 
@@ -92,6 +99,11 @@ def invert(
         prompt: Empty by default, with classifier-free guidance off, so the recovered
             trajectory is the unconditional velocity field and no text confound enters
             a plausible-versus-violated comparison.
+        on_record: Called at each recorded step with ``(index, tau, state)``, where the
+            state is the *unpooled* latent-shaped one. The probe stores states already
+            spatially pooled to ``(T, D)``, which is what the statistics need but cannot
+            be decoded back to pixels; visualisation needs the full tensor. Left unset
+            this costs nothing.
     """
     if (frames is None) == (latents is None):
         raise ValueError("pass exactly one of `frames` or `latents`")
@@ -156,6 +168,8 @@ def invert(
 
             if wanted:
                 probe.capture(len(recorded), state)
+                if on_record is not None:
+                    on_record(len(recorded), float(levels[index]), state)
                 recorded.append(float(levels[index]))
 
             # Explicit step: evaluate at the known endpoint, then move up one level.

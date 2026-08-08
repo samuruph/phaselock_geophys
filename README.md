@@ -39,7 +39,7 @@ carry the signal at all.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 281 tests, CPU only, no weights needed
+python -m pytest tests/ -q          # 289 tests, CPU only, no weights needed
 ```
 
 ## The five statistics
@@ -187,11 +187,19 @@ Extraction is resumable — clips already in `statistics.csv` are skipped.
 
 ## Status
 
-The library and all six drivers are implemented and covered by 281 CPU tests. **No GPU
-run has completed yet**, so there are no results: the smoke tests found and fixed two real
-bugs (a bad `Tensor.to` overload, and `vae.device` lying under CPU offload) but have not
-been run to completion. Nothing here should be treated as validated against a real model
-until `scripts/run_external.py` clears the correctness gate.
+The library and all six drivers are implemented and covered by 289 CPU tests.
+
+**Stage 5 detection has completed** on LikePhys with Wan2.1-T2V-1.3B: 173 clips, 96 matched
+pairs, 3800 scored signals, 50-step inversion, no PhaseLock guidance. The correctness gate
+passed first (DINOv2 at 72.2% against the published 77.6-80.8%), so the internal numbers are
+interpretable. Headline: prediction residual on DiT hidden states averages 72% across all 300
+probe cells, against a 53% label-shuffled floor for a mean; the best single cell is
+acceleration at block 6 / step 4, 85.4%, against a 69% floor for a maximum.
+
+Two caveats travel with those numbers. The DINOv2 comparison is still the *unpooled* run,
+which is 4x finer in time than the latents and so not directly comparable — rerun with
+`--temporal-pool latent` before quoting any internal-versus-external margin. And Stages 6-8
+(generation, step sweep, IntPhys2) have not run.
 
 ## What to watch for
 

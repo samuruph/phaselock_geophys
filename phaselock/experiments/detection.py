@@ -30,7 +30,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 import torch
 
-from ..backends.base import VideoBackend
+from ..backends.base import VideoBackend, to_canonical
 from ..config import Config
 from ..datasets import VideoPair, VideoSample, load_video
 from ..metrics.flow_geometry import (
@@ -205,14 +205,25 @@ def save_visuals(
     pair: VideoPair,
     config: Config,
     directory: Path,
+    video_steps: int = 6,
 ) -> list[Path]:
-    """Write contact sheets so a run can be looked at, not just trusted.
+    """Write videos and contact sheets so a run can be looked at, not just trusted.
 
-    Two sheets per pair: the matched clips side by side (does the violation survive
-    preprocessing at all?) and the inversion round trip against the VAE ceiling (did the
-    recovered trajectory come back to the same video?).
+    Both formats, because they answer different questions. The mp4s are the ones to
+    watch: most LikePhys violations are purely temporal -- a freeze, a jitter, a shuffled
+    segment -- and simply do not exist in sampled stills. The sheets stay because a still
+    can be put in a document and scrubbed frame by frame.
+
+    Three artifacts per pair:
+
+    * ``_pair.mp4`` -- plausible and violated side by side on one clock. Does the
+      violation survive preprocessing at all?
+    * ``_inversion.mp4`` -- the model's clean estimate at each recorded step, all panels
+      playing together, so the trajectory's decay is visible as motion. Decoding the
+      noisy latent instead would show noise at every step and answer nothing.
+    * ``_inversion.png`` -- the round trip against the VAE ceiling, with PSNR.
     """
-    from ..analysis import visuals
+    from ..analysis import video, visuals
     from ..metrics.motion_mask import psnr
     from ..pipelines.inversion import resample
 
@@ -226,15 +237,33 @@ def save_visuals(
 
     plausible, violated = load(pair.plausible), load(pair.violated)
     stem = pair.violated.sample_id.replace("/", "_")
+    written.append(video.pair_video(
+        plausible, violated, directory / f"{stem}_pair.mp4",
+        scenario=pair.scenario, violation=pair.violation,
+    ))
     written.append(visuals.pair_sheet(
         plausible, violated, directory / f"{stem}_pair.png",
         scenario=pair.scenario, violation=pair.violation,
     ))
 
+    # Decode the clean estimate at each recorded step. Held on CPU: a decoded 81-frame
+    # clip is ~300 MB in fp32 and there are `video_steps` of them.
+    steps: list[tuple[float, "torch.Tensor"]] = []
+
+    def keep(index: int, tau: float, state) -> None:
+        steps.append((tau, backend.decode(to_canonical(state.x0, spec)).cpu()))
+
     latents = backend.encode(plausible)
     vae_only = backend.decode(latents).cpu()
-    noise = invert(backend, latents=latents, num_steps=config.inversion.num_steps,
-                   record_steps=2, sources=[LATENT], prompt=config.inversion.prompt).noise
+    noise = invert(
+        backend, latents=latents, num_steps=config.inversion.num_steps,
+        record_steps=video_steps, sources=[LATENT], prompt=config.inversion.prompt,
+        on_record=keep,
+    ).noise
+    written.append(video.inversion_video(
+        steps, directory / f"{stem}_inversion.mp4", original=plausible, kind="x0_hat",
+    ))
+
     recovered = backend.decode(
         resample(backend, noise, num_steps=config.inversion.num_steps,
                  prompt=config.inversion.prompt)
