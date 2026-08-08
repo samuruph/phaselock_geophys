@@ -31,4 +31,4 @@ metrics:
 
 output:
   root: /data/experiments/phaselock_geophys
-  name: pilot_likephys
+  name: pilot

@@ -33,4 +33,4 @@ metrics:
 
 output:
   root: /data/experiments/phaselock_geophys
-  name: detection_intphys2
+  name: detection

@@ -117,17 +117,38 @@ class GenerationConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    """Where artefacts land."""
+    """Where artefacts land.
+
+    Results are filed as ``root/<backend>/<dataset>/<name>/`` rather than in one flat
+    directory. Every number in this project is only meaningful against the model and
+    dataset that produced it -- an accuracy from Wan T2V says nothing about CogVideoX
+    I2V -- and a flat layout of hand-named runs makes that provenance a naming
+    convention, which decays. The path itself carries it here.
+
+    ``name`` is the stage plus any variant: ``detection``, ``detection_pilot6``,
+    ``generation``, ``step_sweep``.
+    """
 
     root: str = "/data/experiments/phaselock_geophys"
     name: str = "run"
+    backend: str = ""
+    dataset: str = ""
+    """Filled in from the rest of the config by :meth:`Config.resolved`; not set by hand."""
 
     def dir(self, *parts: str) -> Path:
-        path = Path(self.root) / self.name
+        path = self.base()
         for part in parts:
             path = path / part
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def base(self) -> Path:
+        """The run directory, with the backend and dataset segments when known."""
+        path = Path(self.root)
+        for segment in (self.backend, self.dataset):
+            if segment:
+                path = path / segment
+        return path / self.name
 
 
 @dataclass(frozen=True)
@@ -141,6 +162,24 @@ class Config:
     metrics: MetricConfig = field(default_factory=MetricConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+
+    def resolved(self) -> "Config":
+        """Fill the output path's backend and dataset segments from this config.
+
+        Done here rather than in each YAML file so the two can never disagree: a run's
+        directory is derived from the backend and dataset it actually used, not from what
+        someone typed alongside them.
+        """
+        if self.output.backend and self.output.dataset:
+            return self
+        return dataclasses.replace(
+            self,
+            output=dataclasses.replace(
+                self.output,
+                backend=self.output.backend or self.backend.name,
+                dataset=self.output.dataset or self.data.name,
+            ),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -248,7 +287,7 @@ def load(path: Optional[str | Path] = None, **overrides: Any) -> Config:
             )
         raw.setdefault(section, {})[leaf] = _coerce(value, declared[leaf])
 
-    return _build(Config, raw)
+    return _build(Config, raw).resolved()
 
 
 def parse_overrides(items: Sequence[str]) -> dict[str, str]:

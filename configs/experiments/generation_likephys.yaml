@@ -37,4 +37,4 @@ metrics:
 
 output:
   root: /data/experiments/phaselock_geophys
-  name: generation_likephys
+  name: generation

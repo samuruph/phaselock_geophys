@@ -107,11 +107,13 @@ def source_comparison(
         axis.axhline(100 * null.null_p95, color=palette.TEXT_MUTED, linestyle=(0, (2, 3)),
                      linewidth=1.1, zorder=1)
         axis.text(
-            len(sources) - 0.45, 100 * null.null_p95, "  noise floor for the best cell (diamonds) ",
+            len(sources) - 0.45, 100 * null.null_p95,
+            f"  a DIAMOND counts only above here ({100 * null.null_p95:.0f}%) ",
             va="bottom", ha="right", fontsize=7.5, color=palette.TEXT_MUTED, zorder=5,
         )
         axis.text(
-            -0.45, 100 * null.mean_null_p95, " noise floor for the mean (bars)",
+            -0.45, 100 * null.mean_null_p95,
+            f" a BAR counts only above here ({100 * null.mean_null_p95:.0f}%)",
             va="bottom", ha="left", fontsize=7.5, color=palette.TEXT_MUTED, zorder=5,
         )
 
@@ -149,7 +151,29 @@ def source_comparison(
     axis.set_xticks(positions, [palette.source_label(s) for s in sources], fontsize=8.5)
     axis.set_ylabel("pairwise detection accuracy (%)")
     axis.set_title("Internal representations vs the external DINOv2 baseline")
-    axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize=8)
+
+    # Two legends. Colour says *which statistic*; the glyphs say *what a mark means*, and
+    # without naming them the vertical whisker reads as an error bar or a noise floor when
+    # it is neither -- it is the spread of accuracy across probe cells.
+    colours = axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize=8)
+    axis.add_artist(colours)
+    if null is not None:
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
+
+        glyphs = [
+            Line2D([0], [0], color=palette.TEXT_MUTED, linewidth=1.0,
+                   label="whisker = spread across cells (1 s.d.), not uncertainty"),
+            Line2D([0], [0], marker="D", linestyle="none", markerfacecolor="none",
+                   markeredgecolor=palette.TEXT_SECONDARY,
+                   label="diamond = single best cell"),
+            Patch(facecolor=palette.GRID,
+                  label=f"grey = a mean here is indistinguishable from chance"),
+            Line2D([0], [0], color=palette.TEXT_MUTED, linestyle=(0, (2, 3)), linewidth=1.1,
+                   label="dashed = a best-of-N pick needs to beat this"),
+        ]
+        axis.legend(handles=glyphs, loc="upper center", bbox_to_anchor=(0.5, -0.24),
+                    ncol=2, fontsize=7.5)
     axis.grid(axis="x", visible=False)
     # From zero: a bar encodes magnitude by length, so a truncated baseline exaggerates
     # differences. The chance line and the null bands carry the reference instead.
@@ -177,7 +201,7 @@ def source_comparison(
             "for noise while a mean cancels it."
         )
     palette.caption(figure, note)
-    figure.tight_layout(rect=(0, 0.14, 1, 1))
+    figure.tight_layout(rect=(0, 0.22, 1, 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path

@@ -34,4 +34,4 @@ metrics:
 
 output:
   root: /data/experiments/phaselock_geophys
-  name: detection_likephys
+  name: detection

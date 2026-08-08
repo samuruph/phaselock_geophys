@@ -37,4 +37,4 @@ metrics:
 
 output:
   root: /data/experiments/phaselock_geophys
-  name: step_sweep_likephys
+  name: step_sweep

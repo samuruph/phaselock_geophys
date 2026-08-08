@@ -68,8 +68,55 @@ per-frame intermediates, not statistics — the statistics are their temporal su
 Note `φ_accel` uses a *squared* norm and `φ_perr` an unsquared one; that asymmetry is the
 paper's.
 
-`ẑ` is the prediction of the previous `H = 3` frames. See [METHOD.md](METHOD.md) for why
-the paper's literal AR fit is underdetermined here and what is used instead.
+#### Notation: `z̄` versus `ẑ`
+
+Easy to confuse, and they mean quite different things.
+
+| symbol | name | what it is |
+|---|---|---|
+| `z̄_t` | **bar** — the pooled feature | The *observed* representation of frame `t`. Take the raw activation (a DiT hidden state, a VAE latent, a DINOv2 patch grid), average it over space, and you have one vector per frame. `z̄` is data. |
+| `ẑ_t` | **hat** — the prediction | Where frame `t` *should have been*, predicted from the frames before it. `ẑ` is a forecast, never observed. |
+
+So the trajectory `Z = (z̄₁ … z̄_T)` is what the clip actually did, and `ẑ_{t+1}` is what
+the previous few frames implied it was about to do.
+
+#### `φ_perr`: the prediction residual
+
+`ε_t = z̄_{t+1} − ẑ_{t+1}` is the gap between the two — **how much the clip surprised a
+short-horizon predictor fitted to its own recent past**. `φ_perr = mean({‖ε_t‖})` averages
+that surprise over the clip.
+
+The intuition for why it detects implausible physics: real dynamics are locally smooth, so
+the next state is largely determined by the last few. A ball passing through a wall, an
+object teleporting, or gravity reversing all break that determination, and the residual
+spikes. Unlike `φ_curv` or `φ_speed`, which ask whether the trajectory *looks* regular in
+isolation, `φ_perr` asks whether it is *self-consistent over time* — which is why it
+transfers to representations that were trained to predict.
+
+#### How `ẑ` is actually computed
+
+The paper says it fits a linear autoregressive predictor `P̂_H : R^{H·D} → R^D` on past
+windows. Taken literally that is unusable here: with `H = 3` and `D = 3072`, one clip
+offers 10 windows to fit 9216 unknowns, so the system is underdetermined and the
+in-sample residual is **exactly zero** for every clip, plausible or not. There is a
+regression test asserting that degeneracy so the trap stays documented.
+
+The default (`residual_fit="span"`) uses the paper's own *geometric* wording instead —
+`ε_t` is the component of `z̄_{t+1}` orthogonal to the span of the previous `H` frames.
+Per window:
+
+1. take the `H = 3` preceding vectors `z̄_{t−2}, z̄_{t−1}, z̄_t`
+2. form the **affine** span through them (their differences from `z̄_t`, so a
+   constant-velocity trajectory is predicted exactly)
+3. project `z̄_{t+1}` onto that span by least squares — the projection is `ẑ_{t+1}`
+4. `ε_t` is the leftover perpendicular component
+
+This is well-posed, training-free, per-clip, and needs no data beyond the clip itself.
+`ridge` (a regularised version of the literal fit, with `λ` scaled by the Gram diagonal so
+it is not swamped) and `scalar` (a single AR coefficient) are available for comparison.
+`H` is never stated in the paper; default 3.
+
+See [METHOD.md](METHOD.md) for the full derivation and the other three deviations.
 
 ### The three new metrics
 

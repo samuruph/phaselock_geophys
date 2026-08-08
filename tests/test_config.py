@@ -123,7 +123,9 @@ def test_a_scalar_stands_in_for_a_single_element_list(tmp_path):
 def test_output_dir_is_created_on_demand(tmp_path):
     config = load(**parse_overrides([f"output__root={tmp_path}", "output__name=run1"]))
     assert config.output.dir("trajectories").is_dir()
-    assert (tmp_path / "run1" / "trajectories").is_dir()
+    # Under the defaults, backend and dataset segments come from the config itself.
+    expected = tmp_path / config.backend.name / config.data.name / "run1" / "trajectories"
+    assert expected.is_dir()
 
 
 def test_config_serialises_for_the_run_record(tmp_path):
@@ -136,3 +138,26 @@ def test_config_serialises_for_the_run_record(tmp_path):
 def test_parse_overrides_requires_an_equals_sign():
     with pytest.raises(ValueError, match="section__key=value"):
         parse_overrides(["data__limit"])
+
+
+def test_results_are_filed_under_backend_and_dataset(tmp_path):
+    """A run directory carries its own provenance.
+
+    Every number in this project is only meaningful against the model and dataset that
+    produced it, so the path encodes both rather than relying on someone naming the run
+    carefully.
+    """
+    from phaselock.config import load
+
+    config = load(None, backend__name="wan21_t2v_1_3b", data__name="likephys",
+                  output__name="detection", output__root=str(tmp_path))
+    assert config.output.base() == tmp_path / "wan21_t2v_1_3b" / "likephys" / "detection"
+
+
+def test_output_segments_are_not_overridden_when_set_explicitly(tmp_path):
+    from phaselock.config import load
+
+    config = load(None, backend__name="wan21_t2v_1_3b", data__name="likephys",
+                  output__backend="custom", output__dataset="other",
+                  output__name="run", output__root=str(tmp_path))
+    assert config.output.base() == tmp_path / "custom" / "other" / "run"

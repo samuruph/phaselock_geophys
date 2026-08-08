@@ -57,7 +57,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 290 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 293 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
@@ -405,28 +405,36 @@ PhaseLock's spectral metric *does* survive the same control, so the two families
 
 ## 9. Output tree
 
+Runs are filed as **`output.root / <backend> / <dataset> / <output.name>`**. An accuracy
+from Wan T2V says nothing about CogVideoX I2V, so the path carries the provenance rather
+than leaving it to a naming convention:
+
 ```
 /data/experiments/phaselock_geophys/
-├── pilot_likephys/
-│   ├── config.json
-│   ├── statistics.csv
-│   ├── signals.csv
-│   └── trajectories/*.npz + *.json
-├── detection_likephys/
-│   ├── config.json  statistics.csv  signals.csv
-│   ├── external/    external_statistics.csv  external_signals.csv
-│   └── figures/     <source>_<kind>_<statistic>.png
-├── generation_likephys/
-│   ├── config.json  candidates.csv  selection.csv
-│   └── videos/*.mp4
-└── step_sweep_likephys/
-    ├── config.json
-    └── sweep.csv
+├── wan21_t2v_1_3b/
+│   └── likephys/
+│       └── detection/
+│           ├── config.json  statistics.csv  signals.csv  reconstruction.json
+│           ├── external/          external_statistics.csv  external_signals.csv
+│           ├── external_latent/   the same, temporally pooled to the latent grid
+│           ├── figures/           01_source_comparison.png, … , <source>/…
+│           └── videos/            *_pair.mp4  *_inversion.mp4  *_roundtrip.mp4
+├── cogvideox_5b_i2v/
+│   └── likephys/
+│       ├── detection/     same shape as above
+│       ├── generation/    config.json  candidates.csv  selection.csv  videos/
+│       └── step_sweep/    config.json  sweep.csv
+└── _archive/              superseded smoke and gate runs, kept for provenance
 ```
 
-Change `output.root` / `output.name` to separate runs. Two runs sharing a `name` will
-**append** to `statistics.csv` — which is what makes resuming work, but means a config
-change under the same name silently mixes settings. Rename when you change anything.
+The two path segments — `backend` and `dataset` under `output` — are filled in
+automatically from `backend.name` and `data.name`, so no config repeats itself; set them
+by hand only to deliberately file a run elsewhere. `output.name` is the stage plus any
+variant: `detection`, `detection_pilot6`, `generation`.
+
+Two runs sharing a full path **append** to `statistics.csv` — which is what makes resuming
+work, but means a config change under the same name silently mixes settings. Change
+`output.name` when you change anything else.
 
 ---
 

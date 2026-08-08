@@ -46,4 +46,4 @@ metrics:
 
 output:
   root: /data/experiments/phaselock_geophys
-  name: detection_likephys_wan
+  name: detection

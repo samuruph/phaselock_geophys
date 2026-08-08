@@ -136,6 +136,36 @@ class CogVideoXBackend(VideoBackend):
         alpha_bar = self.pipe.scheduler.alphas_cumprod.to(x0.device).float()[t]
         return alpha_bar.sqrt() * x0 + (1.0 - alpha_bar).sqrt() * eps
 
+    @torch.no_grad()
+    def encode_image_condition(self, frames: torch.Tensor) -> torch.Tensor:
+        """The I2V conditioning channels for a clip's first frame, canonical ``(T, C, h, w)``.
+
+        Inverting a real video with the I2V checkpoint needs these: that transformer takes
+        32 input channels, 16 latent and 16 conditioning, and without them the forward pass
+        fails on shape. The generation path never hits this because diffusers builds them
+        inside ``pipe()``.
+
+        Replicates ``CogVideoXImageToVideoPipeline.prepare_latents``, including the detail
+        that CogVideoX-5B-I2V sets ``invert_scale_latents``, so the conditioning is scaled
+        by the *reciprocal* of the factor used everywhere else -- the released weights were
+        trained without the multiply.
+        """
+        vae = self.pipe.vae
+        first = frames[:1].unsqueeze(2)  # (1, 3, 1, H, W)
+        latent = vae.encode(self._to_vae(first, vae)).latent_dist.mode()
+        latent = latent.permute(0, 2, 1, 3, 4)  # -> (1, 1, C, h, w)
+
+        factor = self.pipe.vae_scaling_factor_image
+        latent = latent / factor if vae.config.invert_scale_latents else latent * factor
+
+        from .base import num_latent_frames
+
+        total = num_latent_frames(self.spec.default_num_frames, self.spec)
+        padding = torch.zeros(
+            (1, total - 1, *latent.shape[2:]), device=latent.device, dtype=latent.dtype
+        )
+        return torch.cat([latent, padding], dim=1)[0]
+
     def prepare_conditioning(
         self,
         prompt: str = "",
@@ -190,7 +220,10 @@ class CogVideoXBackend(VideoBackend):
         image_latents = conditioning.get("image_latents")
         if image_latents is not None:
             # I2V conditions by concatenating the image latents on the channel axis,
-            # which is dim 2 under BTCHW.
+            # which is dim 2 under BTCHW. Accept the canonical unbatched form too, since
+            # that is what the rest of the codebase passes around.
+            if image_latents.ndim == 4:
+                image_latents = image_latents.unsqueeze(0)
             model_input = torch.cat([model_input, image_latents.to(transformer.dtype)], dim=2)
 
         if timestep.ndim == 0:

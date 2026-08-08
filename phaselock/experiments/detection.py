@@ -148,6 +148,25 @@ def statistics_from_record(
     return rows
 
 
+def image_conditioning(
+    backend: VideoBackend, frames: torch.Tensor, prompt: str
+) -> Optional[dict[str, Any]]:
+    """Conditioning for an I2V backend, or None to let the caller build its own.
+
+    An image-to-video transformer takes the conditioning frame concatenated onto its
+    input channels, so inverting a real clip on one fails on shape unless those channels
+    are supplied. The conditioning frame is the clip's own first frame -- the same frame
+    generation would be given -- so the recovered trajectory is the one that model would
+    have taken for this video.
+
+    Text-to-video backends have no such input and are left alone.
+    """
+    encode = getattr(backend, "encode_image_condition", None)
+    if encode is None or getattr(backend, "mode", "t2v") != "i2v":
+        return None
+    return backend.prepare_conditioning(prompt=prompt, image_latents=encode(frames))
+
+
 def extract_sample(
     backend: VideoBackend,
     sample: VideoSample,
@@ -181,6 +200,7 @@ def extract_sample(
         block_stride=config.probe.block_stride,
         pooling=config.probe.pooling,
         prompt=config.inversion.prompt,
+        conditioning=image_conditioning(backend, frames, config.inversion.prompt),
         provenance={
             "sample_id": sample.sample_id,
             "label": sample.label,
@@ -253,10 +273,11 @@ def save_visuals(
 
     latents = backend.encode(plausible)
     vae_only = backend.decode(latents).cpu()
+    conditioning = image_conditioning(backend, plausible, config.inversion.prompt)
     noise = invert(
         backend, latents=latents, num_steps=config.inversion.num_steps,
         record_steps=video_steps, sources=[LATENT], prompt=config.inversion.prompt,
-        on_record=keep,
+        conditioning=conditioning, on_record=keep,
     ).noise
     written.append(video.inversion_video(
         steps, directory / f"{stem}_inversion.mp4", original=plausible, kind="x0_hat",
@@ -264,7 +285,7 @@ def save_visuals(
 
     recovered = backend.decode(
         resample(backend, noise, num_steps=config.inversion.num_steps,
-                 prompt=config.inversion.prompt)
+                 prompt=config.inversion.prompt, conditioning=conditioning)
     ).cpu()
     # The middle panel is the ceiling: no inversion can beat what the VAE alone keeps.
     # Comparing against it separates "the inversion lost this" from "the VAE never had
@@ -301,6 +322,7 @@ def reconstruction_check(
         width=spec.default_width,
         window=config.data.window,
     )
+    conditioning = image_conditioning(backend, frames, config.inversion.prompt)
     result = invert(
         backend,
         frames,
@@ -308,6 +330,7 @@ def reconstruction_check(
         record_steps=1,
         sources=[LATENT],
         prompt=config.inversion.prompt,
+        conditioning=conditioning,
     )
     recovered = backend.decode(
         resample(
