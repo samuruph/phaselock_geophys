@@ -28,6 +28,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Must run before torch is imported: a system CUDA install ahead of torch's bundled
+# libraries on LD_LIBRARY_PATH aborts the process inside the VAE encode.
+from phaselock.runtime import prepare
+
+prepare()
+
 import torch
 
 from phaselock import load, set_seed

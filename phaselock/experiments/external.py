@@ -56,6 +56,7 @@ def encode_sample(
     pair: VideoPair,
     config: Config,
     layers: Optional[Sequence[int]] = None,
+    num_frames: Optional[int] = None,
 ) -> list[ExternalRow]:
     """Encode one clip and compute the statistics at each requested layer.
 
@@ -67,10 +68,13 @@ def encode_sample(
     Comparing a 60-frame DINOv2 trajectory against a 13-latent-frame internal one would
     confound the representation with the frame rate. Spatial size comes from the encoder,
     which resizes internally anyway.
+
+    ``num_frames`` overrides that for a standalone gate run, where matching the backend is
+    an arbitrary constraint and more trajectory points means less noisy statistics.
     """
     frames = load_video(
         sample.path,
-        num_frames=_frame_budget(config),
+        num_frames=num_frames or _frame_budget(config),
         height=encoder.image_size,
         width=encoder.image_size,
         window=config.data.window,

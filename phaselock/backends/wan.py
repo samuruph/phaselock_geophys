@@ -107,6 +107,10 @@ class WanBackend(VideoBackend):
             pipe.scheduler.config.flow_shift = spec.flow_shift
         if enable_offload:
             pipe.enable_model_cpu_offload()
+        else:
+            # Without offload diffusers leaves every component on the CPU; the caller
+            # asked for speed, not for a pipeline that raises on the first forward.
+            pipe.to(cls._resolve_device())
         # Encoding a full clip at native resolution in one piece is the peak memory point
         # of the whole pipeline, above the transformer itself.
         pipe.vae.enable_slicing()
@@ -197,6 +201,7 @@ class WanBackend(VideoBackend):
             "condition_latents": condition_latents,
         }
 
+    @torch.no_grad()
     def transformer_forward(
         self,
         latents: torch.Tensor,

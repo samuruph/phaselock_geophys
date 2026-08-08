@@ -201,7 +201,11 @@ class VideoBackend(ABC):
     def __init__(self, pipe: Any, spec: LatentSpec, device: Optional[torch.device] = None):
         self.pipe = pipe
         self.spec = spec
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or self._resolve_device()
+
+    @staticmethod
+    def _resolve_device() -> torch.device:
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # -- model structure ---------------------------------------------------
 

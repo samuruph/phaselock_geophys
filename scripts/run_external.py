@@ -23,6 +23,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Must run before torch is imported: a system CUDA install ahead of torch's bundled
+# libraries on LD_LIBRARY_PATH aborts the process inside the VAE encode.
+from phaselock.runtime import prepare
+
+prepare()
+
 from phaselock import load, set_seed
 from phaselock.config import parse_overrides
 from phaselock.datasets import get_paired_dataset
@@ -42,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--model", type=str, default="facebook/dinov2-large")
     parser.add_argument("--layers", type=int, nargs="*", default=None, help="restrict the readout sweep")
+    parser.add_argument("--frames", type=int, default=None, help="override the backend's frame count")
+    parser.add_argument("--image-size", type=int, default=224, help="encoder input resolution")
     parser.add_argument("overrides", nargs="*")
     return parser.parse_args()
 
@@ -69,12 +77,14 @@ def main() -> None:
     samples = unique_samples(pairs)
     logger.info("%s: %d pairs, %d distinct clips", dataset.name, len(pairs), len(samples))
 
-    encoder = DINOv2Encoder(model_id=args.model)
-    logger.info("%s: %d layers, %d prefix tokens", args.model, encoder.num_layers, encoder.num_prefix_tokens)
+    encoder = DINOv2Encoder(model_id=args.model, image_size=args.image_size)
+    logger.info("%s: %d layers, %d prefix tokens, %d frames at %dpx", args.model,
+                encoder.num_layers, encoder.num_prefix_tokens,
+                args.frames or 0, args.image_size)
 
     rows = []
     for index, (sample, pair) in enumerate(samples, start=1):
-        rows.extend(encode_sample(encoder, sample, pair, config, layers=args.layers))
+        rows.extend(encode_sample(encoder, sample, pair, config, layers=args.layers, num_frames=args.frames))
         if index % 20 == 0 or index == len(samples):
             logger.info("[%d/%d] encoded", index, len(samples))
 

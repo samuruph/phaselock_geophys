@@ -62,6 +62,10 @@ class CogVideoXBackend(VideoBackend):
         pipe = pipeline_class.from_pretrained(model_id, torch_dtype=torch_dtype, **kwargs)
         if enable_offload:
             pipe.enable_model_cpu_offload()
+        else:
+            # Without offload diffusers leaves every component on the CPU; the caller
+            # asked for speed, not for a pipeline that raises on the first forward.
+            pipe.to(cls._resolve_device())
         pipe.vae.enable_slicing()
         pipe.vae.enable_tiling()
         return cls(pipe, spec, mode=mode)
@@ -173,6 +177,7 @@ class CogVideoXBackend(VideoBackend):
             "image_latents": image_latents,
         }
 
+    @torch.no_grad()
     def transformer_forward(
         self,
         latents: torch.Tensor,
