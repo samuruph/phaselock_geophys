@@ -35,11 +35,27 @@ def _by_source(rows: Sequence[dict], kind: str = "phi") -> dict[str, dict]:
 # -- F1: which representation carries the geometry --------------------------
 
 
+def pooling_note(pooling: str, ratio: int = 4) -> str:
+    """One line stating how the external path was matched to the latent grid."""
+    if pooling == "latent":
+        return (
+            f"DINOv2 features are averaged over each latent's {ratio} video frames, matching "
+            "the causal VAE, so both paths have the same trajectory length and spacing."
+        )
+    return (
+        f"DINOv2 is per-frame ({ratio}x finer in time than the {ratio}-frame latents), so its "
+        "statistics are NOT directly comparable to the internal ones. Re-run with "
+        "--temporal-pool latent to match."
+    )
+
+
 def source_comparison(
     summaries: Sequence[Any],
     path: Path,
     external: Optional[Sequence[Any]] = None,
     null=None,
+    external_pooling: str = "none",
+    temporal_ratio: int = 4,
 ) -> Optional[Path]:
     """Mean accuracy per (source, statistic) across the whole probe grid.
 
@@ -118,7 +134,8 @@ def source_comparison(
             if np.isnan(mean):
                 continue
             # Just above the bar top, below the error bar, so the two do not fight.
-            axis.text(x, mean + 0.8, f"{mean:.0f}", ha="center", va="bottom",
+            # Offset sideways: centred, it lands on the error-bar whisker.
+            axis.text(x + width * 0.42, mean, f"{mean:.0f}", ha="left", va="center",
                       fontsize=6.4, color=palette.TEXT_SECONDARY, zorder=6)
             axis.text(x, best + 1.4, f"{best:.0f}", ha="center", va="bottom",
                       fontsize=5.6, color=palette.TEXT_MUTED, zorder=6)
@@ -147,6 +164,7 @@ def source_comparison(
         "band drawn here."
     )
     if null is not None:
+        note += "\n" + pooling_note(external_pooling, temporal_ratio)
         note += (
             f"\nTwo nulls, from {null.n_signals} label-shuffled signals (n={null.n_pairs} pairs): "
             f"a mean clears noise above {100 * null.mean_null_p95:.0f}% (grey band), but a single "
@@ -161,7 +179,8 @@ def source_comparison(
 
 
 def external_comparison(
-    summaries: Sequence[Any], path: Path, internal: Optional[Sequence[Any]] = None
+    summaries: Sequence[Any], path: Path, internal: Optional[Sequence[Any]] = None,
+    pooling: str = "none", temporal_ratio: int = 4,
 ) -> Optional[Path]:
     """The external DINOv2 path, kept in its own figure.
 
@@ -185,8 +204,8 @@ def external_comparison(
     axis.scatter(np.arange(len(names)), [100 * s.best for s in summaries], marker="D", s=16,
                  facecolors="none", edgecolors=palette.TEXT_SECONDARY, zorder=5)
     for index, item in enumerate(summaries):
-        axis.text(index, 100 * item.mean + 0.8, f"{100*item.mean:.1f}", ha="center",
-                  va="bottom", fontsize=7.5, color=palette.TEXT_SECONDARY)
+        axis.text(index + 0.32, 100 * item.mean, f"{100*item.mean:.1f}", ha="left",
+                  va="center", fontsize=7.5, color=palette.TEXT_SECONDARY)
         axis.text(index, 100 * item.best + 1.2, f"{100*item.best:.1f}", ha="center",
                   va="bottom", fontsize=7, color=palette.TEXT_MUTED)
     axis.set_ylim(0, 105)
@@ -200,7 +219,7 @@ def external_comparison(
         figure,
         f"Bar = mean over all {summaries[0].n_cells} readout layers; error bar = 1 s.d.; "
         "diamond = best layer. This is the correctness gate: GeoPhys reports 77.6-80.8% "
-        "for a single backbone on LikePhys.",
+        f"for a single backbone on LikePhys.\n{pooling_note(pooling, temporal_ratio)}",
     )
     figure.tight_layout(rect=(0, 0.04, 1, 1))
     figure.savefig(path, bbox_inches="tight")
@@ -313,7 +332,7 @@ def depth_time_heatmaps(
 
     steps = sorted({step for step, _ in cells})
     blocks = sorted({block for _, block in cells})
-    if len(blocks) < 2:
+    if len(blocks) < 2 or len(steps) < 2:
         return None
 
     shape = (len(steps), len(blocks))
@@ -435,7 +454,7 @@ def statistic_comparison(
                      linestyle=(0, (3, 3)))
 
     for index, (mean, std, best) in enumerate(zip(means, stds, bests)):
-        axis.text(index, mean + 0.8, f"{mean:.1f}", ha="center", va="bottom",
+        axis.text(index + 0.33, mean, f"{mean:.1f}", ha="left", va="center",
                   fontsize=7.5, color=palette.TEXT_SECONDARY)
         axis.text(index, best + 1.2, f"{best:.1f}", ha="center", va="bottom",
                   fontsize=7, color=palette.TEXT_MUTED)
@@ -502,8 +521,8 @@ def drift_comparison(rows: Sequence[dict], path: Path) -> Optional[Path]:
     for index, source in enumerate(order):
         for offset, kind in ((-0.19, "phi"), (0.19, "drift")):
             mean, std = summary[source][kind]
-            axis.text(index + offset, mean + 0.8, f"{mean:.0f}", ha="center",
-                      va="bottom", fontsize=7, color=palette.TEXT_SECONDARY)
+            axis.text(index + offset + 0.19, mean, f"{mean:.0f}", ha="left", va="center",
+                      fontsize=7, color=palette.TEXT_SECONDARY)
 
     axis.set_ylim(0, 105)
     axis.set_ylabel("pairwise detection accuracy (%)")
@@ -745,6 +764,9 @@ def render_all(
     sweep: Optional[Sequence[dict]] = None,
     latent_profiles: Optional[dict] = None,
     statistics_rows: Optional[Sequence[dict]] = None,
+    external_rows: Optional[Sequence[dict]] = None,
+    external_pooling: str = "none",
+    temporal_ratio: int = 4,
 ) -> list[Path]:
     """Render the whole figure set.
 
@@ -763,9 +785,11 @@ def render_all(
     # -- cross-source ------------------------------------------------------
     if summaries:
         add(source_comparison(summaries, directory / "01_source_comparison.png",
-                              external=external_summaries, null=null))
+                              external=external_summaries, null=null,
+                              external_pooling=external_pooling, temporal_ratio=temporal_ratio))
     if external_summaries:
-        add(external_comparison(external_summaries, directory / "02_external_baseline.png"))
+        add(external_comparison(external_summaries, directory / "02_external_baseline.png",
+                                pooling=external_pooling, temporal_ratio=temporal_ratio))
     add(drift_comparison(rows, directory / "03_statistic_vs_drift.png"))
     if sweep:
         add(step_sweep(sweep, directory / "04_step_sweep.png"))
@@ -773,18 +797,26 @@ def render_all(
         add(latent_motion_profile(latent_profiles, directory / "05_latent_motion.png"))
 
     # -- per source --------------------------------------------------------
-    for source in sorted({row["source"] for row in rows}):
+    # DINOv2's "depth" is its readout layer and it has no denoising trajectory, so its
+    # rows are mapped onto the same schema with block = layer and a single step. That
+    # makes the whole per-source figure set apply to the external baseline too.
+    combined_rows = list(rows)
+    combined_statistics = list(statistics_rows or [])
+    if external_rows:
+        combined_rows += [dict(row, source="dinov2") for row in external_rows]
+    for source in sorted({row["source"] for row in combined_rows}):
         folder = directory / source
         folder.mkdir(parents=True, exist_ok=True)
-        add(statistic_comparison(rows, folder / "01_statistic_comparison.png", source=source))
-        add(depth_profile(rows, folder / "02_depth_profile.png", source=source))
-        add(depth_time_heatmaps(rows, folder / "03_depth_vs_time.png", source=source,
+        add(statistic_comparison(combined_rows, folder / "01_statistic_comparison.png",
+                                 source=source))
+        add(depth_profile(combined_rows, folder / "02_depth_profile.png", source=source))
+        add(depth_time_heatmaps(combined_rows, folder / "03_depth_vs_time.png", source=source,
                                 steps_to_timestep=steps_to_timestep))
-        if statistics_rows:
+        if combined_statistics:
             # GeoPhys Figure 3 analogue: the statistic itself for plausible vs violated.
-            add(signal_profile(statistics_rows, folder / "04_signal_profile_depth.png",
+            add(signal_profile(combined_statistics, folder / "04_signal_profile_depth.png",
                                source=source, x_axis="block"))
-            add(signal_profile(statistics_rows, folder / "05_signal_profile_time.png",
+            add(signal_profile(combined_statistics, folder / "05_signal_profile_time.png",
                                source=source, x_axis="step",
                                steps_to_timestep=steps_to_timestep))
     return written

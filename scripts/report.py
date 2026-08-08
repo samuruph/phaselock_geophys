@@ -207,8 +207,14 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
             int(row["step"]): round((1.0 - float(row["tau"])) * 1000) for row in statistics
         }
 
+    # A pooled external run, if present, is the one that is actually comparable to the
+    # internal path; fall back to the unpooled one and say so in the figures.
+    external_dir, external_pooling = run_dir / "external_latent", "latent"
+    if not (external_dir / "external_signals.csv").is_file():
+        external_dir, external_pooling = run_dir / "external", "none"
+
     external_summaries = None
-    external_rows = load(run_dir / "external" / "external_signals.csv")
+    external_rows = load(external_dir / "external_signals.csv")
     if external_rows:
         from phaselock.experiments.detection import SourceSummary
 
@@ -227,12 +233,30 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
             for name, values in sorted(grouped.items())
         ]
 
+    # Map the external per-clip table onto the internal schema (block = readout layer,
+    # one step) so DINOv2 gets the same per-source figures as everything else.
+    external_statistics = [
+        dict(row, source="dinov2", block=row.get("encoder_layer", 0), step=0)
+        for row in load(external_dir / "external_statistics.csv")
+    ]
+    external_signal_rows = [
+        {"source": "dinov2", "block": row["layer"], "step": 0, "statistic": row["statistic"],
+         "kind": "phi", "accuracy": row["accuracy"], "ci_low": row["ci_low"],
+         "ci_high": row["ci_high"], "auc": row.get("auc", ""), "n_pairs": row["n_pairs"]}
+        for row in external_rows
+    ]
+
+    from phaselock.backends import get_spec
+
     sweep = load(run_dir / "sweep.csv") or None
     written = render_all(
         rows, run_dir / "figures", summaries=summaries,
         external_summaries=external_summaries, null=null,
         steps_to_timestep=steps_to_timestep, sweep=sweep,
-        statistics_rows=statistics,
+        statistics_rows=statistics + external_statistics,
+        external_rows=external_signal_rows,
+        external_pooling=external_pooling,
+        temporal_ratio=get_spec(config["backend"]["name"]).temporal_ratio,
     )
     print(f"\nwrote {len(written)} figures to {run_dir / 'figures'}")
     for path in written:
