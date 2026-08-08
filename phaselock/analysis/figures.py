@@ -40,6 +40,7 @@ def source_comparison(
     path: Path,
     external: Optional[dict] = None,
     kind: str = "phi",
+    null=None,
 ) -> Optional[Path]:
     """Best pairwise accuracy per representation, against the external baseline.
 
@@ -54,10 +55,12 @@ def source_comparison(
     if not best:
         return None
 
-    entries = [(name, row) for name, row in best.items()]
+    # Internal sources form one comparable group; the external baseline is a different
+    # kind of thing, measured on a different sample with a different selection, so it is
+    # separated rather than interleaved into the ranking.
+    entries = sorted(best.items(), key=lambda item: float(item[1]["accuracy"]))
     if external:
-        entries.append(("dinov2", external))
-    entries.sort(key=lambda item: float(item[1]["accuracy"]))
+        entries = [("dinov2", external)] + entries
 
     labels = [palette.source_label(name) for name, _ in entries]
     values = [_pct(row["accuracy"]) for _, row in entries]
@@ -67,7 +70,30 @@ def source_comparison(
         palette.REFERENCE if name == "dinov2" else palette.PRIMARY for name, _ in entries
     ]
 
-    figure, axis = plt.subplots(figsize=(7.6, 0.62 * len(entries) + 2.1))
+    figure, axis = plt.subplots(figsize=(9.8, 0.66 * len(entries) + 2.9))
+    if null is not None:
+        # Selecting the best of thousands of signals is biased upward; this is how high
+        # that selection climbs on label-shuffled data, where there is nothing to find.
+        #
+        # The band covers only the internal rows. The external baseline was selected from
+        # far fewer signals on far more pairs, so its noise floor is much lower and
+        # sweeping one band across both would understate it.
+        internal = [i for i, (name, _) in enumerate(entries) if name != "dinov2"]
+        if internal:
+            from matplotlib.patches import Rectangle
+
+            low, high = min(internal) - 0.45, max(internal) + 0.45
+            axis.add_patch(Rectangle(
+                (CHANCE, low), 100 * null.null_p95 - CHANCE, high - low,
+                facecolor=palette.GRID, edgecolor="none", alpha=0.85, zorder=0,
+            ))
+            axis.text(
+                100 * null.null_p95 - 0.8, low + 0.05,
+                f"best of {null.n_signals} internal signals reaches here by chance  ",
+                va="bottom", ha="right", fontsize=7.5, color=palette.TEXT_MUTED, zorder=5,
+            )
+            # A rule between the external baseline and the internal group.
+            axis.axhline(min(internal) - 0.5, color=palette.GRID, linewidth=1.4, zorder=2)
     bars = axis.barh(labels, values, height=0.62, color=colours, zorder=3)
     axis.errorbar(
         values, range(len(values)), xerr=[lows, highs], fmt="none",
@@ -81,29 +107,37 @@ def source_comparison(
         detail = "" if name == "dinov2" else f"  {_signal_location(row)}"
         axis.text(
             x, bar.get_y() + bar.get_height() / 2,
-            f"{value:.1f}%{detail}", va="center", ha="left",
+            f"{value:.1f}%  (n={int(row['n_pairs'])}){detail}", va="center", ha="left",
             fontsize=8.5, color=palette.TEXT_SECONDARY,
         )
 
     axis.set_xlim(40, max(102, max(label_x) + 17))
-    axis.set_xlabel("pairwise detection accuracy (%)")
+    axis.set_xlabel("pairwise detection accuracy (%)   —  50% is chance")
     axis.set_title("Which representation separates plausible from violated physics?")
     axis.grid(axis="y", visible=False)
-    palette.caption(
-        figure,
-        "Best-scoring probe location per source, with 95% bootstrap CI grouped by scenario. "
-        "The external DINOv2 path is the published GeoPhys method and the yardstick.",
+    note = (
+        "Best probe location per source (95% bootstrap CI, grouped by scenario). "
+        f"{palette.NOTATION_KEY}"
     )
-    figure.tight_layout(rect=(0, 0.035, 1, 1))
+    if null is not None:
+        note += (
+            f"\nGrey band = selection noise floor for the internal sources: the best of "
+            f"{null.n_signals} signals reaches {100 * null.null_p95:.0f}% on shuffled labels. "
+            "Only bars clear of it are real. It does not apply to DINOv2, selected from far "
+            "fewer signals on more pairs."
+        )
+    palette.caption(figure, note)
+    figure.tight_layout(rect=(0, 0.10, 1, 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path
 
 
 def _signal_location(row: dict) -> str:
+    """Where the signal was read, in words. "b7/s4" tells a reader nothing."""
     block = int(row["block"])
-    where = "" if block < 0 else f"b{block}/"
-    return f"({where}s{int(row['step'])}, {row['statistic']})"
+    where = "" if block < 0 else f"block {block}, "
+    return f"{where}step {int(row['step'])} — {palette.statistic_plain(row['statistic'])}"
 
 
 # -- F2: where in depth does the signal live --------------------------------

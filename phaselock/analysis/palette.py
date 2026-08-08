@@ -62,14 +62,30 @@ STATISTIC_COLOURS = {
 }
 
 STATISTIC_LABELS = {
-    "speed": r"$\varphi_{speed}$  (speed variation)",
-    "curv": r"$\varphi_{curv}$  (mean turning angle)",
-    "ang": r"$\varphi_{ang}$  (angle consistency)",
-    "accel": r"$\varphi_{accel}$  (acceleration)",
-    "perr": r"$\varphi_{perr}$  (prediction residual)",
+    "speed": r"$\varphi_{speed}$  speed variation",
+    "curv": r"$\varphi_{curv}$  mean turning angle",
+    "ang": r"$\varphi_{ang}$  turning-angle consistency",
+    "accel": r"$\varphi_{accel}$  acceleration",
+    "perr": r"$\varphi_{perr}$  prediction residual",
+    "or": "OR ensemble (all five)",
+    "majority": "Majority ensemble (all five)",
+}
+
+# Plain words, for places where an axis label would be crowded by the symbol.
+STATISTIC_PLAIN = {
+    "speed": "speed variation",
+    "curv": "mean turning angle",
+    "ang": "angle consistency",
+    "accel": "acceleration",
+    "perr": "prediction residual",
     "or": "OR ensemble",
     "majority": "Majority ensemble",
 }
+
+NOTATION_KEY = (
+    "block = depth in the diffusion transformer (0 = input side).   "
+    "step = recorded point on the inversion trajectory (0 = clean video, last = noise)."
+)
 
 SOURCE_LABELS = {
     "hidden_states": "DiT hidden states",
@@ -141,6 +157,10 @@ def sequential_cmap() -> Any:
 
 def statistic_label(name: str) -> str:
     return STATISTIC_LABELS.get(name, name)
+
+
+def statistic_plain(name: str) -> str:
+    return STATISTIC_PLAIN.get(name, name)
 
 
 def source_label(name: str) -> str:

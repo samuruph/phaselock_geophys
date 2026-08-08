@@ -4,7 +4,7 @@ Kept apart from the metrics so that plotting never becomes a dependency of measu
 and so a figure can be re-rendered from a CSV without a GPU.
 """
 
-from . import palette
+from . import palette, visuals
 from .figures import (
     depth_profile,
     depth_time_heatmaps,
@@ -22,6 +22,7 @@ __all__ = [
     "drift_comparison",
     "latent_motion_profile",
     "palette",
+    "visuals",
     "render_all",
     "source_comparison",
     "statistic_comparison",

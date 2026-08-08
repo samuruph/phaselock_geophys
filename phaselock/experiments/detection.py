@@ -200,6 +200,53 @@ def extract_sample(
     )
 
 
+def save_visuals(
+    backend: VideoBackend,
+    pair: VideoPair,
+    config: Config,
+    directory: Path,
+) -> list[Path]:
+    """Write contact sheets so a run can be looked at, not just trusted.
+
+    Two sheets per pair: the matched clips side by side (does the violation survive
+    preprocessing at all?) and the inversion round trip against the VAE ceiling (did the
+    recovered trajectory come back to the same video?).
+    """
+    from ..analysis import visuals
+    from ..metrics.motion_mask import psnr
+    from ..pipelines.inversion import resample
+
+    spec = backend.spec
+    written: list[Path] = []
+    load = lambda sample: load_video(
+        sample.path, num_frames=spec.default_num_frames,
+        height=spec.default_height, width=spec.default_width,
+        window=config.data.window, blur_sigma=config.data.blur_sigma,
+    )
+
+    plausible, violated = load(pair.plausible), load(pair.violated)
+    stem = pair.violated.sample_id.replace("/", "_")
+    written.append(visuals.pair_sheet(
+        plausible, violated, directory / f"{stem}_pair.png",
+        scenario=pair.scenario, violation=pair.violation,
+    ))
+
+    latents = backend.encode(plausible)
+    vae_only = backend.decode(latents).cpu()
+    noise = invert(backend, latents=latents, num_steps=config.inversion.num_steps,
+                   record_steps=2, sources=[LATENT], prompt=config.inversion.prompt).noise
+    recovered = backend.decode(
+        resample(backend, noise, num_steps=config.inversion.num_steps,
+                 prompt=config.inversion.prompt)
+    ).cpu()
+    written.append(visuals.inversion_sheet(
+        plausible, vae_only, recovered, directory / f"{stem}_inversion.png",
+        sample_id=pair.plausible.sample_id,
+        psnr_vae=psnr(vae_only, plausible), psnr_inversion=psnr(recovered, plausible),
+    ))
+    return written
+
+
 def reconstruction_check(
     backend: VideoBackend, sample: VideoSample, config: Config
 ) -> dict[str, float]:
@@ -326,6 +373,51 @@ def score_signals(
                     resamples=resamples,
                 )
     return results
+
+
+def delta_matrix(
+    rows: Sequence[dict[str, Any]], pairs: Sequence[VideoPair], kind: str = "phi"
+) -> "np.ndarray":
+    """Signed deltas for every scorable signal, shaped ``(n_signals, n_pairs)``.
+
+    Feeds :func:`~phaselock.metrics.scoring.selection_null`, which needs the same signal
+    set that the reported maximum was selected from -- otherwise the null is measuring a
+    different selection procedure than the one that produced the number.
+
+    Only pairs complete across *every* signal are kept, so each column is one pair.
+    """
+    import numpy as np
+
+    indexed: dict[tuple, dict[str, dict]] = defaultdict(dict)
+    for row in rows:
+        indexed[(row["source"], int(row["block"]), int(row["step"]))][row["sample_id"]] = row
+
+    usable = [
+        pair
+        for pair in pairs
+        if all(
+            pair.plausible.sample_id in cell and pair.violated.sample_id in cell
+            for cell in indexed.values()
+        )
+    ]
+    if len(usable) < 2:
+        return np.empty((0, 0))
+
+    columns: list[list[float]] = []
+    for cell in indexed.values():
+        for name in STATISTICS:
+            column = f"{kind}_{name}"
+            values = [
+                (
+                    _maybe_float(cell[pair.violated.sample_id].get(column)),
+                    _maybe_float(cell[pair.plausible.sample_id].get(column)),
+                )
+                for pair in usable
+            ]
+            if any(bad is None or good is None for bad, good in values):
+                continue
+            columns.append([bad - good for bad, good in values])
+    return np.asarray(columns, dtype=np.float64) if columns else np.empty((0, 0))
 
 
 def _maybe_float(value: Any) -> Optional[float]:

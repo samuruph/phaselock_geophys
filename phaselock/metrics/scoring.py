@@ -207,6 +207,77 @@ def evaluate_pairs(
     )
 
 
+@dataclass(frozen=True)
+class SelectionNull:
+    """How high the *best* of many signals climbs when none of them carry signal."""
+
+    observed: float
+    null_median: float
+    null_p95: float
+    p_value: float
+    n_signals: int
+    n_pairs: int
+
+    @property
+    def significant(self) -> bool:
+        return self.p_value < 0.05
+
+    def __str__(self) -> str:
+        verdict = "above" if self.significant else "WITHIN"
+        return (
+            f"best {100 * self.observed:.1f}% vs null median {100 * self.null_median:.1f}%, "
+            f"95th pct {100 * self.null_p95:.1f}%  (p={self.p_value:.3f}, {verdict} the noise band; "
+            f"{self.n_signals} signals, n={self.n_pairs})"
+        )
+
+
+def selection_null(
+    deltas: np.ndarray, resamples: int = 500, seed: int = 0
+) -> SelectionNull:
+    """Permutation null for the maximum accuracy over many signals.
+
+    Scoring thousands of ``(source, block, step, statistic)`` combinations and reporting
+    the best one is a selection procedure, and its output is biased upward by
+    construction. With 36 pairs a single signal has a standard error near 8%, so the best
+    of a few thousand correlated tests lands well above 50% even when none of them see
+    anything.
+
+    The null respects the pairing: which member of a pair is labelled violated is
+    exchangeable under the null hypothesis, so flipping a pair's sign at random gives a
+    dataset with the same correlation structure and no signal. The statistic is the
+    *maximum* accuracy across all signals, which is what gets reported.
+
+    Args:
+        deltas: ``(n_signals, n_pairs)`` signed deltas, positive meaning correct.
+
+    Returns:
+        The observed maximum against the null distribution of maxima.
+    """
+    deltas = np.asarray(deltas, dtype=np.float64)
+    if deltas.ndim != 2:
+        raise ValueError(f"expected a (signals, pairs) matrix, got shape {deltas.shape}")
+    n_signals, n_pairs = deltas.shape
+    if n_pairs < 2:
+        raise ValueError("need at least two pairs")
+
+    observed = float(((deltas > 0).mean(axis=1)).max())
+
+    rng = np.random.default_rng(seed)
+    maxima = np.empty(resamples)
+    for index in range(resamples):
+        signs = rng.choice([-1.0, 1.0], size=n_pairs)
+        maxima[index] = ((deltas * signs) > 0).mean(axis=1).max()
+
+    return SelectionNull(
+        observed=observed,
+        null_median=float(np.median(maxima)),
+        null_p95=float(np.quantile(maxima, 0.95)),
+        p_value=float((maxima >= observed).mean()),
+        n_signals=n_signals,
+        n_pairs=n_pairs,
+    )
+
+
 def majority_ensemble(z_by_signal: dict[str, np.ndarray]) -> np.ndarray:
     """``sum_b z_b`` -- the continuous score the paper uses for Majority ROC curves.
 

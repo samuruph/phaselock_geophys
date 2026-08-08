@@ -31,6 +31,7 @@ from phaselock.backends import load_backend
 from phaselock.config import parse_overrides
 from phaselock.datasets import get_paired_dataset
 from phaselock.experiments.detection import (
+    delta_matrix,
     extract_sample,
     reconstruction_check,
     score_ensembles,
@@ -39,6 +40,7 @@ from phaselock.experiments.detection import (
     unique_samples,
     write_rows,
 )
+from phaselock.metrics.scoring import selection_null
 from phaselock.utils import resolve_dtype
 
 logger = logging.getLogger("run_detection")
@@ -49,6 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default=None, help="YAML experiment config")
     parser.add_argument("--score-only", action="store_true", help="skip extraction, score the existing CSV")
     parser.add_argument("--top", type=int, default=25, help="how many signals to print")
+    parser.add_argument("--save-visuals", type=int, default=0, metavar="N",
+                        help="write contact sheets for the first N pairs, to inspect by eye")
     parser.add_argument("overrides", nargs="*", help="section__key=value overrides")
     return parser.parse_args()
 
@@ -78,6 +82,9 @@ def main() -> None:
     )
     logger.info("%s: %d pairs over %d scenarios", dataset.name, len(pairs), len({p.scenario for p in pairs}))
 
+    if args.save_visuals:
+        write_visuals(config, pairs[: args.save_visuals], output)
+
     if not args.score_only:
         extract(config, pairs, statistics_path, output)
 
@@ -100,7 +107,29 @@ def main() -> None:
     ensembles = score_ensembles(rows, pairs)
     logger.info("scored %d single signals and %d ensembles", len(results), len(ensembles))
 
-    report(results, ensembles, args.top, output)
+    # Reporting the best of thousands of signals is a selection procedure, and its
+    # output is biased upward. The permutation null says how high it would climb anyway.
+    null = None
+    deltas = delta_matrix(rows, pairs)
+    if deltas.size:
+        null = selection_null(deltas, resamples=300)
+        logger.info("selection null: %s", null)
+
+    report(results, ensembles, args.top, output, null)
+
+
+def write_visuals(config, pairs, output: Path) -> None:
+    """Contact sheets for eyeballing preprocessing and inversion before trusting numbers."""
+    from phaselock.experiments.detection import save_visuals
+
+    backend = load_backend(
+        config.backend.name, model_id=config.backend.model_id,
+        torch_dtype=resolve_dtype(config.backend.dtype), enable_offload=config.backend.offload,
+    )
+    directory = config.output.dir("visuals")
+    for index, pair in enumerate(pairs, start=1):
+        for path in save_visuals(backend, pair, config, directory):
+            logger.info("[%d/%d] wrote %s", index, len(pairs), path.name)
 
 
 def extract(config, pairs, statistics_path, output) -> None:
@@ -140,9 +169,20 @@ def extract(config, pairs, statistics_path, output) -> None:
         logger.info("[%d/%d] %s -> %d rows", index, len(todo), sample.sample_id, written)
 
 
-def report(results, ensembles, top: int, output: Path) -> None:
+def report(results, ensembles, top: int, output: Path, null=None) -> None:
     """Print the ranked signals, the per-source comparison and the ensembles."""
     ranked = sorted(results.items(), key=lambda item: item[1].accuracy, reverse=True)
+
+    if null is not None:
+        print("\n" + "=" * 88)
+        print("SELECTION-CORRECTED SIGNIFICANCE")
+        print(f"  {null}")
+        if not null.significant:
+            print("  The best signal is INSIDE the band the best-of-N reaches by chance.")
+            print("  Treat the table below as exploratory: more pairs, not more signals.")
+        else:
+            print("  The best signal exceeds what selection alone produces.")
+        print("=" * 88)
 
     print(f"\n{'signal':<52} {'pairwise acc':>26} {'AUC':>7}")
     print("-" * 88)
