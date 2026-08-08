@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from . import palette
 
@@ -36,108 +36,160 @@ def _by_source(rows: Sequence[dict], kind: str = "phi") -> dict[str, dict]:
 
 
 def source_comparison(
-    rows: Sequence[dict],
+    summaries: Sequence[Any],
     path: Path,
-    external: Optional[dict] = None,
-    kind: str = "phi",
+    external: Optional[Sequence[Any]] = None,
     null=None,
 ) -> Optional[Path]:
-    """Best pairwise accuracy per representation, against the external baseline.
+    """Mean accuracy per (source, statistic) across the whole probe grid.
 
-    The headline figure: it is the whole point of the project stated as one chart.
-    Sources are nominal categories, so they share one hue rather than a value ramp --
-    the bar length already encodes the magnitude. The external baseline is a different
-    kind of thing, so it gets its own hue.
+    The headline figure. Bars are the **mean over every (block, step) cell**, with the
+    error bar the spread across cells; the open diamond marks the single best cell.
+
+    Reporting only that best cell -- which is what an earlier version of this figure did
+    -- is a selection procedure over hundreds of correlated tests and reads high by
+    construction. The mean answers the question actually being asked: does this
+    representation carry the signal *wherever you look*, or only at one lucky cell?
     """
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    best = _by_source(rows, kind)
-    if not best:
+    if not summaries:
         return None
 
-    # Internal sources form one comparable group; the external baseline is a different
-    # kind of thing, measured on a different sample with a different selection, so it is
-    # separated rather than interleaved into the ranking.
-    entries = sorted(best.items(), key=lambda item: float(item[1]["accuracy"]))
+    # Only the value metrics belong here. phi_* and the two flow-coupling metrics are all
+    # "a number read off the trajectory"; drift is a rate of change and gets its own
+    # figure. Keying without `kind` silently collapsed the three together.
+    summaries = [s for s in summaries if s.kind in ("phi", "coupling")]
     if external:
-        entries = [("dinov2", external)] + entries
+        summaries = list(summaries) + [s for s in external if s.kind in ("phi", "coupling")]
+    if not summaries:
+        return None
 
-    labels = [palette.source_label(name) for name, _ in entries]
-    values = [_pct(row["accuracy"]) for _, row in entries]
-    lows = [max(0.0, value - _pct(row["ci_low"])) for value, (_, row) in zip(values, entries)]
-    highs = [max(0.0, _pct(row["ci_high"]) - value) for value, (_, row) in zip(values, entries)]
-    colours = [
-        palette.REFERENCE if name == "dinov2" else palette.PRIMARY for name, _ in entries
-    ]
+    internal_names = {s.source for s in summaries if s.source != "dinov2"}
+    sources = sorted(internal_names, key=lambda name: -max(
+        item.mean for item in summaries if item.source == name
+    ))
+    # The external baseline goes last, behind a rule: it is the comparison the project
+    # exists to make, so it belongs on the same axes, but its cells are readout layers on
+    # 800 pairs rather than probe locations on 36, so its noise floor is not the same one.
+    has_external = any(s.source == "dinov2" for s in summaries)
+    if has_external:
+        sources = sources + ["dinov2"]
+    statistics = [n for n in ("speed", "curv", "ang", "accel", "perr", "alignment", "erosion")
+                  if any(s.statistic == n for s in summaries)]
+    lookup = {(s.source, s.statistic): s for s in summaries}
 
-    figure, axis = plt.subplots(figsize=(9.8, 0.66 * len(entries) + 2.9))
+    figure, axis = plt.subplots(figsize=(2.0 + 1.45 * len(sources), 5.2))
+    width = 0.8 / max(len(statistics), 1)
+    positions = np.arange(len(sources))
+
     if null is not None:
-        # Selecting the best of thousands of signals is biased upward; this is how high
-        # that selection climbs on label-shuffled data, where there is nothing to find.
-        #
-        # The band covers only the internal rows. The external baseline was selected from
-        # far fewer signals on far more pairs, so its noise floor is much lower and
-        # sweeping one band across both would understate it.
-        internal = [i for i, (name, _) in enumerate(entries) if name != "dinov2"]
-        if internal:
-            from matplotlib.patches import Rectangle
-
-            low, high = min(internal) - 0.45, max(internal) + 0.45
-            axis.add_patch(Rectangle(
-                (CHANCE, low), 100 * null.null_p95 - CHANCE, high - low,
-                facecolor=palette.GRID, edgecolor="none", alpha=0.85, zorder=0,
-            ))
-            axis.text(
-                100 * null.null_p95 - 0.8, low + 0.05,
-                f"best of {null.n_signals} internal signals reaches here by chance  ",
-                va="bottom", ha="right", fontsize=7.5, color=palette.TEXT_MUTED, zorder=5,
-            )
-            # A rule between the external baseline and the internal group.
-            axis.axhline(min(internal) - 0.5, color=palette.GRID, linewidth=1.4, zorder=2)
-    bars = axis.barh(labels, values, height=0.62, color=colours, zorder=3)
-    axis.errorbar(
-        values, range(len(values)), xerr=[lows, highs], fmt="none",
-        ecolor=palette.TEXT_MUTED, elinewidth=1.2, capsize=3, zorder=4,
-    )
-    palette.annotate_chance(axis, CHANCE, horizontal=True)
-
-    # Labels sit past the *whisker*, not past the bar, or they collide with the CI.
-    label_x = [max(value, _pct(row["ci_high"])) + 1.4 for value, (_, row) in zip(values, entries)]
-    for bar, value, x, (name, row) in zip(bars, values, label_x, entries):
-        detail = "" if name == "dinov2" else f"  {_signal_location(row)}"
+        # Two different nulls, because the bars and the diamonds are different statistics.
+        # A mean over hundreds of cells cancels noise; a maximum selects for it.
+        axis.axhspan(CHANCE, 100 * null.mean_null_p95, color=palette.GRID, alpha=0.9, zorder=0)
+        axis.axhline(100 * null.null_p95, color=palette.TEXT_MUTED, linestyle=(0, (2, 3)),
+                     linewidth=1.1, zorder=1)
         axis.text(
-            x, bar.get_y() + bar.get_height() / 2,
-            f"{value:.1f}%  (n={int(row['n_pairs'])}){detail}", va="center", ha="left",
-            fontsize=8.5, color=palette.TEXT_SECONDARY,
+            len(sources) - 0.45, 100 * null.null_p95, "  noise floor for the best cell (diamonds) ",
+            va="bottom", ha="right", fontsize=7.5, color=palette.TEXT_MUTED, zorder=5,
+        )
+        axis.text(
+            -0.45, 100 * null.mean_null_p95, " noise floor for the mean (bars)",
+            va="bottom", ha="left", fontsize=7.5, color=palette.TEXT_MUTED, zorder=5,
         )
 
-    axis.set_xlim(40, max(102, max(label_x) + 17))
-    axis.set_xlabel("pairwise detection accuracy (%)   —  50% is chance")
-    axis.set_title("Which representation separates plausible from violated physics?")
-    axis.grid(axis="y", visible=False)
+    for index, name in enumerate(statistics):
+        offset = (index - (len(statistics) - 1) / 2) * width
+        means = [100 * lookup[(src, name)].mean if (src, name) in lookup else np.nan for src in sources]
+        stds = [100 * lookup[(src, name)].std if (src, name) in lookup else 0.0 for src in sources]
+        axis.bar(
+            positions + offset, means, width=width * 0.9, yerr=stds, capsize=2,
+            color=palette.STATISTIC_COLOURS.get(name, palette.PRIMARY),
+            error_kw={"elinewidth": 1.0, "ecolor": palette.TEXT_MUTED},
+            label=palette.statistic_plain(name), zorder=3,
+        )
+        bests = [100 * lookup[(src, name)].best if (src, name) in lookup else np.nan for src in sources]
+        axis.scatter(
+            positions + offset, bests, marker="D", s=13, zorder=5,
+            facecolors="none", edgecolors=palette.TEXT_SECONDARY, linewidths=0.9,
+        )
+
+    if has_external:
+        axis.axvline(len(sources) - 1.5, color=palette.TEXT_MUTED, linewidth=1.2,
+                     linestyle=(0, (3, 3)), zorder=2)
+        axis.text(len(sources) - 1.45, 97, " external", fontsize=7.5,
+                  color=palette.TEXT_MUTED, va="top", ha="left")
+
+    palette.annotate_chance(axis, CHANCE)
+    axis.set_xticks(positions, [palette.source_label(s) for s in sources], fontsize=8.5)
+    axis.set_ylabel("pairwise detection accuracy (%)")
+    axis.set_title("Internal representations vs the external DINOv2 baseline")
+    axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize=8)
+    axis.grid(axis="x", visible=False)
+    axis.set_ylim(35, 100)
+
+    cells = max((s.n_cells for s in summaries if s.source != "dinov2"), default=0)
     note = (
-        "Best probe location per source (95% bootstrap CI, grouped by scenario). "
-        f"{palette.NOTATION_KEY}"
+        f"Bar = mean over all {cells} probe cells (block x denoising step) for that source and "
+        "statistic; error bar = 1 s.d. across cells; open diamond = the single best cell. "
+        "DINOv2 cells are its 25 readout layers on 800 pairs, so its floor is lower than the "
+        "band drawn here."
     )
     if null is not None:
         note += (
-            f"\nGrey band = selection noise floor for the internal sources: the best of "
-            f"{null.n_signals} signals reaches {100 * null.null_p95:.0f}% on shuffled labels. "
-            "Only bars clear of it are real. It does not apply to DINOv2, selected from far "
-            "fewer signals on more pairs."
+            f"\nTwo nulls, from {null.n_signals} label-shuffled signals (n={null.n_pairs} pairs): "
+            f"a mean clears noise above {100 * null.mean_null_p95:.0f}% (grey band), but a single "
+            f"best cell needs {100 * null.null_p95:.0f}% (dashed line) because a maximum selects "
+            "for noise while a mean cancels it."
         )
     palette.caption(figure, note)
-    figure.tight_layout(rect=(0, 0.10, 1, 1))
+    figure.tight_layout(rect=(0, 0.14, 1, 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path
 
 
-def _signal_location(row: dict) -> str:
-    """Where the signal was read, in words. "b7/s4" tells a reader nothing."""
-    block = int(row["block"])
-    where = "" if block < 0 else f"block {block}, "
-    return f"{where}step {int(row['step'])} — {palette.statistic_plain(row['statistic'])}"
+def external_comparison(
+    summaries: Sequence[Any], path: Path, internal: Optional[Sequence[Any]] = None
+) -> Optional[Path]:
+    """The external DINOv2 path, kept in its own figure.
+
+    Separate from F1 deliberately: it is measured on a different sample with a different
+    selection, so its noise floor differs and placing it on shared axes invites a
+    comparison the numbers do not support.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    if not summaries:
+        return None
+    names = [s.statistic for s in summaries]
+    means = [100 * s.mean for s in summaries]
+    stds = [100 * s.std for s in summaries]
+
+    figure, axis = plt.subplots(figsize=(7.0, 4.0))
+    axis.bar(np.arange(len(names)), means, yerr=stds, capsize=3, width=0.6,
+             color=palette.REFERENCE, error_kw={"elinewidth": 1.0, "ecolor": palette.TEXT_MUTED},
+             zorder=3)
+    axis.scatter(np.arange(len(names)), [100 * s.best for s in summaries], marker="D", s=16,
+                 facecolors="none", edgecolors=palette.TEXT_SECONDARY, zorder=5)
+    palette.annotate_chance(axis, CHANCE)
+    axis.set_xticks(np.arange(len(names)), [palette.statistic_plain(n) for n in names],
+                    fontsize=8, rotation=15, ha="right")
+    axis.set_ylabel("pairwise detection accuracy (%)")
+    axis.set_title("External baseline — frozen DINOv2 (the published GeoPhys method)")
+    axis.grid(axis="x", visible=False)
+    palette.caption(
+        figure,
+        f"Bar = mean over all {summaries[0].n_cells} readout layers; error bar = 1 s.d.; "
+        "diamond = best layer. This is the correctness gate: GeoPhys reports 77.6-80.8% "
+        "for a single backbone on LikePhys.",
+    )
+    figure.tight_layout(rect=(0, 0.04, 1, 1))
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+    return path
 
 
 # -- F2: where in depth does the signal live --------------------------------
@@ -146,56 +198,60 @@ def _signal_location(row: dict) -> str:
 def depth_profile(
     rows: Sequence[dict], path: Path, source: str = "hidden_states", kind: str = "phi"
 ) -> Optional[Path]:
-    """Accuracy against block index, one line per statistic.
+    """Accuracy against block index: mean across denoising steps, with the spread shaded.
 
     The geometric analogue of the Invisible Hand's Figure 4, which found linear-probe
-    accuracy peaking in the middle third of the network. A line plot rather than a
-    heatmap because the question is *where the peak is*, which a line answers directly.
+    accuracy peaking in the middle third of the network.
+
+    The solid line is the **mean over the recorded denoising steps** at that depth and the
+    shaded cone is +/- 1 s.d.; the faint dotted line is the maximum. Plotting only the
+    maximum, as an earlier version did, shows the luckiest step at each depth and so
+    traces an envelope that no single probe location achieves.
     """
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    per_statistic: dict[str, dict[int, float]] = defaultdict(dict)
+    per_statistic: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
         if row["source"] != source or row.get("kind") != kind:
             continue
         block = int(row["block"])
         if block < 0:
             continue
-        # Best over denoising steps, so the line is "what this depth can do".
-        accuracy = _pct(row["accuracy"])
-        per_statistic[row["statistic"]][block] = max(
-            per_statistic[row["statistic"]].get(block, 0.0), accuracy
-        )
+        per_statistic[row["statistic"]][block].append(_pct(row["accuracy"]))
     if not per_statistic:
         return None
 
-    figure, axis = plt.subplots(figsize=(7.6, 4.2))
+    figure, axis = plt.subplots(figsize=(8.2, 4.6))
     for name, series in sorted(per_statistic.items()):
         blocks = sorted(series)
-        axis.plot(
-            blocks, [series[b] for b in blocks],
-            color=palette.STATISTIC_COLOURS.get(name, palette.PRIMARY),
-            label=palette.statistic_label(name), marker="o", markersize=4,
-        )
-    palette.annotate_chance(axis, CHANCE)
+        means = np.array([np.mean(series[b]) for b in blocks])
+        stds = np.array([np.std(series[b]) for b in blocks])
+        maxima = np.array([np.max(series[b]) for b in blocks])
+        colour = palette.STATISTIC_COLOURS.get(name, palette.PRIMARY)
 
+        axis.fill_between(blocks, means - stds, means + stds, color=colour, alpha=0.15, linewidth=0)
+        axis.plot(blocks, means, color=colour, label=palette.statistic_plain(name),
+                  marker="o", markersize=3.5)
+        axis.plot(blocks, maxima, color=colour, linewidth=0.9, linestyle=(0, (1, 2)), alpha=0.55)
+
+    palette.annotate_chance(axis, CHANCE)
     depth = max(max(s) for s in per_statistic.values())
-    axis.axvspan(depth / 3, 2 * depth / 3, color=palette.GRID, alpha=0.55, zorder=0)
-    axis.text(
-        depth / 2, axis.get_ylim()[1], "middle third", ha="center", va="top",
-        fontsize=8, color=palette.TEXT_MUTED,
-    )
+    axis.axvspan(depth / 3, 2 * depth / 3, color=palette.GRID, alpha=0.5, zorder=0)
+    axis.text(depth / 2, axis.get_ylim()[1], "middle third", ha="center", va="top",
+              fontsize=8, color=palette.TEXT_MUTED)
 
     axis.set_xlabel(f"{palette.source_label(source)} — block index (0 = input side)")
     axis.set_ylabel("pairwise detection accuracy (%)")
-    axis.set_title("Where in depth is physical plausibility most readable?")
-    axis.legend(loc="best", ncol=2)
+    axis.set_title(f"Where in depth is plausibility readable? — {palette.source_label(source)}")
+    axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=4, fontsize=8)
     palette.caption(
         figure,
-        "Best over recorded denoising steps at each depth. The shaded band is the middle "
-        "third, where 'The Invisible Hand of Physics' reports linear probes peaking.",
+        "Solid line = mean over recorded denoising steps at that depth; shaded cone = 1 s.d.; "
+        "faint dotted line = the best step at that depth. The shaded band is the middle third, "
+        "where 'The Invisible Hand of Physics' reports linear probes peaking.",
     )
-    figure.tight_layout(rect=(0, 0.035, 1, 1))
+    figure.tight_layout(rect=(0, 0.15, 1, 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path
@@ -205,73 +261,105 @@ def depth_profile(
 
 
 def depth_time_heatmaps(
-    rows: Sequence[dict], path: Path, statistic: str = "curv", kind: str = "phi"
+    rows: Sequence[dict],
+    path: Path,
+    source: str = "hidden_states",
+    kind: str = "phi",
+    steps_to_timestep: Optional[Mapping[int, int]] = None,
+    top_k: int = 5,
 ) -> Optional[Path]:
-    """Block x denoising-step accuracy, one panel per source, on a shared scale.
+    """Denoising time against depth, aggregated over statistics two ways.
 
-    Diverging about chance: 50% is the neutral midpoint, so above and below read as
-    opposite rather than as two shades of the same thing.
+    Rows are diffusion timesteps and columns are blocks, so reading down a column shows
+    how one depth behaves over the trajectory.
+
+    Two panels because "best" and "typical" are different questions and a single matrix
+    cannot answer both:
+
+    * **left, max over the five statistics** -- the best case at each location, which is
+      what a tuned detector would use, and is upward-biased by the same selection effect
+      that inflates any maximum;
+    * **right, mean over the five statistics** -- whether the location is informative in
+      general rather than for one lucky statistic.
+
+    Stars mark the top ``top_k`` cells of each panel, the brightest being the best.
     """
     import matplotlib.pyplot as plt
     import numpy as np
 
-    grids: dict[str, dict[tuple[int, int], float]] = defaultdict(dict)
+    cells: dict[tuple[int, int], list[float]] = defaultdict(list)
     for row in rows:
-        if row["statistic"] != statistic or row.get("kind") != kind:
+        if row["source"] != source or row.get("kind") != kind:
             continue
-        grids[row["source"]][(int(row["block"]), int(row["step"]))] = _pct(row["accuracy"])
-    # This figure is about depth, so a source with a single block has nothing to show
-    # here and would be stretched into a meaningless one-row panel.
-    grids = {k: v for k, v in grids.items() if len({b for b, _ in v}) > 1}
-    if not grids:
+        cells[(int(row["step"]), int(row["block"]))].append(_pct(row["accuracy"]))
+    if not cells:
         return None
 
-    order = sorted(grids, key=lambda s: -max(grids[s].values()))
-    # constrained_layout rather than tight_layout: the shared colourbar is attached to
-    # the whole axes row, which tight_layout cannot solve.
-    figure, axes = plt.subplots(
-        1, len(order), figsize=(3.1 * len(order) + 1.4, 4.4), squeeze=False,
-        layout="constrained",
-    )
-    extreme = max(abs(v - CHANCE) for grid in grids.values() for v in grid.values())
-    span = max(8.0, extreme)
+    steps = sorted({step for step, _ in cells})
+    blocks = sorted({block for _, block in cells})
+    if len(blocks) < 2:
+        return None
+
+    shape = (len(steps), len(blocks))
+    best = np.full(shape, np.nan)
+    mean = np.full(shape, np.nan)
+    for (step, block), values in cells.items():
+        best[steps.index(step), blocks.index(block)] = max(values)
+        mean[steps.index(step), blocks.index(block)] = float(np.mean(values))
+
+    span = max(8.0, np.nanmax(np.abs(np.concatenate([best, mean]) - CHANCE)))
+    figure, axes = plt.subplots(1, 2, figsize=(6.0 + 0.34 * len(blocks), 5.0),
+                                squeeze=False, layout="constrained", sharey=True)
     image = None
 
-    for axis, source in zip(axes[0], order):
-        grid = grids[source]
-        blocks = sorted({b for b, _ in grid})
-        steps = sorted({s for _, s in grid})
-        array = np.full((len(blocks), len(steps)), np.nan)
-        for (block, step), value in grid.items():
-            array[blocks.index(block), steps.index(step)] = value
-
-        image = axis.imshow(
-            array, aspect="auto", cmap=palette.diverging_cmap(),
-            vmin=CHANCE - span, vmax=CHANCE + span, interpolation="nearest",
-        )
-        axis.set_xticks(range(len(steps)), steps, fontsize=7.5)
-        show = blocks if len(blocks) <= 12 else blocks[:: max(1, len(blocks) // 10)]
-        axis.set_yticks([blocks.index(b) for b in show],
-                        ["-" if b < 0 else b for b in show], fontsize=7.5)
-        axis.set_title(f"{palette.source_label(source)}\nbest {max(grid.values()):.1f}%", fontsize=9)
-        axis.set_xlabel("recorded step")
+    for axis, array, title in (
+        (axes[0][0], best, "max over the five statistics"),
+        (axes[0][1], mean, "mean over the five statistics"),
+    ):
+        image = axis.imshow(array, aspect="auto", cmap=palette.diverging_cmap(),
+                            vmin=CHANCE - span, vmax=CHANCE + span, interpolation="nearest")
+        axis.set_title(f"{title}\nbest cell {np.nanmax(array):.1f}%", fontsize=9)
+        axis.set_xlabel("block index (depth) —>")
         axis.grid(False)
-    axes[0][0].set_ylabel("block index")
 
-    bar = figure.colorbar(image, ax=axes[0], fraction=0.025, pad=0.02)
+        shown = blocks if len(blocks) <= 14 else blocks[:: max(1, len(blocks) // 12)]
+        axis.set_xticks([blocks.index(b) for b in shown], shown, fontsize=7.5)
+
+        # Stars on the top cells: brightest for the best, dimmer for the runners-up.
+        flat = np.argsort(np.nan_to_num(array, nan=-1e9), axis=None)[::-1][:top_k]
+        for rank, index in enumerate(flat):
+            row_index, column = np.unravel_index(index, array.shape)
+            if np.isnan(array[row_index, column]):
+                continue
+            axis.scatter(
+                column, row_index, marker="*",
+                s=190 if rank == 0 else 95,
+                facecolor="#ffd400" if rank == 0 else "#ffe98a",
+                edgecolor=palette.TEXT_PRIMARY, linewidths=0.7 if rank == 0 else 0.4,
+                zorder=6,
+            )
+
+    labels = [
+        f"t={steps_to_timestep[s]}" if steps_to_timestep and s in steps_to_timestep else f"step {s}"
+        for s in steps
+    ]
+    axes[0][0].set_yticks(range(len(steps)), labels, fontsize=7.5)
+    axes[0][0].set_ylabel("diffusion timestep  (t=0 is the video, t~999 is noise)")
+
+    bar = figure.colorbar(image, ax=axes[0], fraction=0.03, pad=0.02)
     bar.set_label("pairwise accuracy (%)", fontsize=8.5, color=palette.TEXT_SECONDARY)
     bar.ax.axhline(CHANCE, color=palette.TEXT_PRIMARY, linewidth=1.0)
 
     figure.suptitle(
-        f"Detection accuracy across depth and denoising time — {palette.statistic_label(statistic)}",
+        f"Depth against denoising time — {palette.source_label(source)}",
         x=0.01, ha="left", fontsize=11, fontweight="bold", color=palette.TEXT_PRIMARY,
     )
-    # constrained_layout does not know about figure.text, so reserve the strip itself.
-    figure.get_layout_engine().set(rect=(0, 0.07, 1, 0.90))
+    figure.get_layout_engine().set(rect=(0, 0.085, 1, 0.92))
     palette.caption(
         figure,
-        "Step 0 is the clean end of the trajectory, the last is the noisy end. Shared diverging "
-        "scale centred on chance: white is no signal, red above, blue below.",
+        f"Stars: the {top_k} strongest cells per panel, brightest = best. Left is upward-biased "
+        "by taking a maximum; the right panel is the one to trust for 'is this location "
+        "informative'. Diverging scale centred on chance: white is no signal.",
     )
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
@@ -282,63 +370,72 @@ def depth_time_heatmaps(
 
 
 def statistic_comparison(
-    rows: Sequence[dict], path: Path, source: Optional[str] = None
+    rows: Sequence[dict], path: Path, source: str = "hidden_states", kind: str = "phi"
 ) -> Optional[Path]:
-    """Accuracy per geometric statistic, with the OR and Majority ensembles alongside.
+    """Accuracy per geometric statistic for one source: mean, spread and best.
 
-    GeoPhys's headline claim is that the ensemble beats any single statistic, because
-    different signals catch different violations. This is where that either shows up or
-    does not.
+    Same convention as the source comparison, so the two read together: bar = mean over
+    the probe grid, error bar = 1 s.d., open diamond = best cell.
+
+    GeoPhys's headline claim is that combining the statistics beats any of them alone,
+    because different signals catch different violations. The ensembles sit to the right
+    of the divider, which is where that either shows up or does not.
     """
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    if source is None:
-        best = _by_source(rows, "phi")
-        if not best:
-            return None
-        source = max(best, key=lambda name: float(best[name]["accuracy"]))
-
-    scores: dict[str, float] = {}
+    grouped: dict[str, list[float]] = defaultdict(list)
     for row in rows:
-        if row["source"] != source:
+        if row["source"] != source or row.get("kind") != kind:
             continue
-        name = row["statistic"]
-        scores[name] = max(scores.get(name, 0.0), _pct(row["accuracy"]))
-    if not scores:
+        grouped[row["statistic"]].append(_pct(row["accuracy"]))
+    if not grouped:
         return None
 
-    singles = [n for n in ("speed", "curv", "ang", "accel", "perr") if n in scores]
-    ensembles = [n for n in ("or", "majority") if n in scores]
-    names = singles + ensembles
-    values = [scores[n] for n in names]
+    singles = [n for n in ("speed", "curv", "ang", "accel", "perr") if n in grouped]
+    coupling = [n for n in ("alignment", "erosion") if n in grouped]
+    ensembles = [n for n in ("or", "majority") if n in grouped]
+    names = singles + coupling + ensembles
+    if not names:
+        return None
 
-    figure, axis = plt.subplots(figsize=(7.4, 4.0))
-    bars = axis.bar(
-        range(len(names)), values, width=0.62,
-        color=[palette.STATISTIC_COLOURS.get(n, palette.PRIMARY) for n in names], zorder=3,
-    )
+    means = np.array([np.mean(grouped[n]) for n in names])
+    stds = np.array([np.std(grouped[n]) for n in names])
+    bests = np.array([np.max(grouped[n]) for n in names])
+
+    figure, axis = plt.subplots(figsize=(1.15 * len(names) + 3.0, 4.6))
+    axis.bar(np.arange(len(names)), means, yerr=stds, capsize=3, width=0.62,
+             color=[palette.STATISTIC_COLOURS.get(n, palette.PRIMARY) for n in names],
+             error_kw={"elinewidth": 1.0, "ecolor": palette.TEXT_MUTED}, zorder=3)
+    axis.scatter(np.arange(len(names)), bests, marker="D", s=16, zorder=5,
+                 facecolors="none", edgecolors=palette.TEXT_SECONDARY, linewidths=0.9)
     palette.annotate_chance(axis, CHANCE)
+
+    boundary = len(singles) + len(coupling) - 0.5
     if ensembles:
-        axis.axvline(len(singles) - 0.5, color=palette.GRID, linewidth=1.4)
+        axis.axvline(boundary, color=palette.GRID, linewidth=1.4)
+    if coupling:
+        axis.axvline(len(singles) - 0.5, color=palette.GRID, linewidth=1.4,
+                     linestyle=(0, (3, 3)))
 
-    for bar, value in zip(bars, values):
-        axis.text(
-            bar.get_x() + bar.get_width() / 2, value + 0.7, f"{value:.1f}",
-            ha="center", va="bottom", fontsize=8.5, color=palette.TEXT_SECONDARY,
-        )
+    for index, (mean, std) in enumerate(zip(means, stds)):
+        axis.text(index, mean + std + 1.0, f"{mean:.0f}", ha="center", va="bottom",
+                  fontsize=8, color=palette.TEXT_SECONDARY)
 
-    axis.set_xticks(range(len(names)),
-                    [n if n not in ("or", "majority") else n.upper() for n in names])
-    axis.set_ylim(40, max(100, max(values) + 8))
+    axis.set_xticks(np.arange(len(names)),
+                    [palette.statistic_plain(n) for n in names],
+                    fontsize=8, rotation=20, ha="right")
+    axis.set_ylim(35, max(100, float(bests.max()) + 6))
     axis.set_ylabel("pairwise detection accuracy (%)")
-    axis.set_title(f"Which geometric statistic carries the signal? — {palette.source_label(source)}")
+    axis.set_title(f"Which statistic carries the signal? — {palette.source_label(source)}")
     axis.grid(axis="x", visible=False)
     palette.caption(
         figure,
-        "Left of the divider: the five statistics individually. Right: combined across all "
-        "five. GeoPhys reports the OR combination well above any single signal.",
+        "Bar = mean over the probe grid, error bar = 1 s.d., diamond = best cell. Dashed "
+        "divider separates the five GeoPhys statistics from the two new flow-coupling "
+        "metrics; solid divider separates both from the ensembles over all five.",
     )
-    figure.tight_layout(rect=(0, 0.035, 1, 1))
+    figure.tight_layout(rect=(0, 0.05, 1, 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path
@@ -361,32 +458,50 @@ def drift_comparison(rows: Sequence[dict], path: Path) -> Optional[Path]:
         kind = row.get("kind")
         if kind not in ("phi", "drift"):
             continue
-        paired[row["source"]][kind] = max(
-            paired[row["source"]].get(kind, 0.0), _pct(row["accuracy"])
-        )
+        paired[row["source"]].setdefault(kind, []).append(_pct(row["accuracy"]))
     complete = {s: v for s, v in paired.items() if "phi" in v and "drift" in v}
     if not complete:
         return None
 
-    order = sorted(complete, key=lambda s: -complete[s]["phi"])
+    summary = {
+        source: {k: (float(np.mean(v)), float(np.std(v))) for k, v in kinds.items()}
+        for source, kinds in complete.items()
+    }
+    order = sorted(summary, key=lambda s: -summary[s]["phi"][0])
     positions = np.arange(len(order))
-    figure, axis = plt.subplots(figsize=(7.4, 4.0))
-    axis.bar(positions - 0.19, [complete[s]["phi"] for s in order], width=0.36,
-             color=palette.CATEGORICAL[0], label=r"$\varphi_\sigma$  (the statistic)", zorder=3)
-    axis.bar(positions + 0.19, [complete[s]["drift"] for s in order], width=0.36,
-             color=palette.CATEGORICAL[2], label=r"$\dot{g}_\sigma$  (its drift under the flow)", zorder=3)
+    figure, axis = plt.subplots(figsize=(7.8, 4.4))
+    axis.bar(positions - 0.19, [summary[s]["phi"][0] for s in order], width=0.36,
+             yerr=[summary[s]["phi"][1] for s in order], capsize=2,
+             error_kw={"elinewidth": 1.0, "ecolor": palette.TEXT_MUTED},
+             color=palette.CATEGORICAL[0], label=r"$\varphi_\sigma$  the statistic", zorder=3)
+    axis.bar(positions + 0.19, [summary[s]["drift"][0] for s in order], width=0.36,
+             yerr=[summary[s]["drift"][1] for s in order], capsize=2,
+             error_kw={"elinewidth": 1.0, "ecolor": palette.TEXT_MUTED},
+             color=palette.CATEGORICAL[2], label=r"$\dot{g}_\sigma$  its drift under the flow", zorder=3)
     palette.annotate_chance(axis, CHANCE)
 
     axis.set_xticks(positions, [palette.source_label(s) for s in order], fontsize=8)
     axis.set_ylim(40, 100)
     axis.set_ylabel("pairwise detection accuracy (%)")
-    axis.set_title("Is the geometry more telling than its rate of change?")
+    axis.set_title("Is the geometry more telling than its rate of change under the flow?")
     axis.legend(loc="upper right")
     axis.grid(axis="x", visible=False)
+
+    # State the metric, so the reader is not guessing what "drift" means.
+    axis.text(
+        0.015, 0.965,
+        r"$\dot{g}_\sigma(\tau)\;=\;\left\langle\, \nabla_{\bar{z}}\,\varphi_\sigma(\bar{z}(\tau)),"
+        r"\;\bar{u}_\theta(z,\tau) \,\right\rangle$" "\n"
+        r"$\dot{g}_\sigma<0$: the step is making the trajectory more regular",
+        transform=axis.transAxes, va="top", ha="left", fontsize=8.5,
+        color=palette.TEXT_SECONDARY,
+        bbox=dict(facecolor=palette.SURFACE, edgecolor=palette.GRID, boxstyle="round,pad=0.45"),
+    )
     palette.caption(
         figure,
-        "Drift is exact only for the VAE latent, which is the ODE state; every other source "
-        "uses a finite difference across recorded steps and is resolution-limited.",
+        "Bars are means over the probe grid. The drift is exact only for the VAE latent, which "
+        "is the ODE state itself; every other source uses a finite difference across recorded "
+        "steps and is limited by the recording stride.",
     )
     figure.tight_layout(rect=(0, 0.035, 1, 1))
     figure.savefig(path, bbox_inches="tight")
@@ -501,11 +616,19 @@ def latent_motion_profile(
 def render_all(
     rows: Sequence[dict],
     directory: Path,
-    external: Optional[dict] = None,
+    summaries: Optional[Sequence[Any]] = None,
+    external_summaries: Optional[Sequence[Any]] = None,
+    null=None,
+    steps_to_timestep: Optional[Mapping[int, int]] = None,
     sweep: Optional[Sequence[dict]] = None,
     latent_profiles: Optional[dict] = None,
 ) -> list[Path]:
-    """Render every figure the available data supports."""
+    """Render the whole figure set.
+
+    Cross-source figures land at the top level; the per-source figures are repeated for
+    **every** representation in its own subdirectory, so each one can be read on its own
+    terms rather than only for whichever source happened to score highest.
+    """
     palette.apply_style()
     directory.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -514,17 +637,24 @@ def render_all(
         if result is not None:
             written.append(result)
 
-    add(source_comparison(rows, directory / "01_source_comparison.png", external))
-    add(depth_profile(rows, directory / "02_depth_profile.png"))
-    best = _by_source(rows, "phi")
-    statistic = (
-        max(best.values(), key=lambda row: float(row["accuracy"]))["statistic"] if best else "curv"
-    )
-    add(depth_time_heatmaps(rows, directory / "03_depth_vs_time.png", statistic))
-    add(statistic_comparison(rows, directory / "04_statistic_comparison.png"))
-    add(drift_comparison(rows, directory / "05_statistic_vs_drift.png"))
+    # -- cross-source ------------------------------------------------------
+    if summaries:
+        add(source_comparison(summaries, directory / "01_source_comparison.png",
+                              external=external_summaries, null=null))
+    if external_summaries:
+        add(external_comparison(external_summaries, directory / "02_external_baseline.png"))
+    add(drift_comparison(rows, directory / "03_statistic_vs_drift.png"))
     if sweep:
-        add(step_sweep(sweep, directory / "06_step_sweep.png"))
+        add(step_sweep(sweep, directory / "04_step_sweep.png"))
     if latent_profiles:
-        add(latent_motion_profile(latent_profiles, directory / "07_latent_motion.png"))
+        add(latent_motion_profile(latent_profiles, directory / "05_latent_motion.png"))
+
+    # -- per source --------------------------------------------------------
+    for source in sorted({row["source"] for row in rows}):
+        folder = directory / source
+        folder.mkdir(parents=True, exist_ok=True)
+        add(statistic_comparison(rows, folder / "01_statistic_comparison.png", source=source))
+        add(depth_profile(rows, folder / "02_depth_profile.png", source=source))
+        add(depth_time_heatmaps(rows, folder / "03_depth_vs_time.png", source=source,
+                                steps_to_timestep=steps_to_timestep))
     return written

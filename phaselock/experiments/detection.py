@@ -348,9 +348,15 @@ def score_signals(
         if not usable:
             continue
 
-        for kind in ("phi", "drift"):
-            for name in STATISTICS:
-                column = f"{kind}_{name}"
+        # "coupling" carries the two flow-coupling metrics, which live in bare columns
+        # rather than under a phi_/drift_ prefix. They were measured from the start but
+        # never scored, so they were absent from every figure.
+        scorable = [(kind, name) for kind in ("phi", "drift") for name in STATISTICS]
+        scorable += [("coupling", "alignment"), ("coupling", "erosion")]
+
+        for kind, name in scorable:
+            if True:
+                column = name if kind == "coupling" else f"{kind}_{name}"
                 # Drop only the pairs with a missing value, not the whole signal: the
                 # last recorded step legitimately has no drift, and the latent carries
                 # alignment where other sources do not.
@@ -429,6 +435,63 @@ def _maybe_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+@dataclass(frozen=True)
+class SourceSummary:
+    """How a source performs across its whole probe grid, not just at its best cell.
+
+    Reporting only the maximum over a (block x step x statistic) grid is a selection
+    procedure and reads high by construction. The mean and spread over the grid is the
+    honest summary of "what this representation gives you"; the best is kept alongside
+    only so the two can be compared, and it is meaningful only against the permutation
+    null.
+    """
+
+    source: str
+    statistic: str
+    kind: str
+    mean: float
+    std: float
+    n_cells: int
+    best: float
+    best_label: str
+
+    def __str__(self) -> str:
+        return (
+            f"{100 * self.mean:.1f}% +/- {100 * self.std:.1f}  "
+            f"(best {100 * self.best:.1f}% at {self.best_label}, {self.n_cells} cells)"
+        )
+
+
+def summarise_grid(
+    results: dict[SignalKey, PairwiseResult], per_statistic: bool = True
+) -> list[SourceSummary]:
+    """Mean, spread and best accuracy per source, optionally split by statistic.
+
+    Averaging over the grid mixes probe locations, which is the point: a representation
+    that only works at one hand-picked cell out of hundreds is not a usable detector.
+    """
+    import statistics as stats_module
+
+    buckets: dict[tuple[str, str, str], list[tuple[float, SignalKey]]] = defaultdict(list)
+    for key, result in results.items():
+        name = key.statistic if per_statistic else "all"
+        buckets[(key.source, name, key.kind)].append((result.accuracy, key))
+
+    summaries: list[SourceSummary] = []
+    for (source, name, kind), entries in buckets.items():
+        values = [value for value, _ in entries]
+        best_value, best_key = max(entries, key=lambda item: item[0])
+        summaries.append(
+            SourceSummary(
+                source=source, statistic=name, kind=kind,
+                mean=sum(values) / len(values),
+                std=stats_module.pstdev(values) if len(values) > 1 else 0.0,
+                n_cells=len(values), best=best_value, best_label=best_key.label(),
+            )
+        )
+    return sorted(summaries, key=lambda item: -item.mean)
 
 
 def best_signals(

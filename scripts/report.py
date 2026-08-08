@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -181,23 +182,57 @@ def heatmaps(rows: list[dict], statistic: str | None, source: str | None, kind: 
 
 
 def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
-    """Render the figure set. See phaselock/analysis/figures.py for what each one asks."""
-    from phaselock.analysis import render_all
+    """Render the figure set. See phaselock/analysis/figures.py for what each asks."""
+    import csv as _csv
 
-    external_rows = load(run_dir / "external" / "external_signals.csv")
-    external = None
-    if external_rows:
-        best = max(external_rows, key=lambda row: float(row["accuracy"]))
-        external = {
-            "source": "dinov2", "block": -1, "step": 0,
-            "statistic": best["statistic"], "kind": "phi",
-            "accuracy": best["accuracy"], "ci_low": best["ci_low"],
-            "ci_high": best["ci_high"], "auc": best.get("auc") or 0.0,
-            "n_pairs": best["n_pairs"],
+    from phaselock.analysis import render_all
+    from phaselock.datasets import get_paired_dataset
+    from phaselock.experiments.detection import delta_matrix, score_signals, summarise_grid
+    from phaselock.metrics.scoring import selection_null
+
+    config = json.loads((run_dir / "config.json").read_text())
+    dataset = get_paired_dataset(config["data"]["name"])
+    pairs = dataset.select(limit=config["data"]["limit"], seed=config["data"]["seed"])
+
+    statistics = load(run_dir / "statistics.csv")
+    summaries, null, steps_to_timestep = None, None, None
+    if statistics:
+        results = score_signals(statistics, pairs, resamples=200)
+        summaries = summarise_grid(results)
+        deltas = delta_matrix(statistics, pairs)
+        if deltas.size:
+            null = selection_null(deltas, resamples=300)
+        # Recorded step index -> the actual diffusion timestep, so axes are readable.
+        steps_to_timestep = {
+            int(row["step"]): round((1.0 - float(row["tau"])) * 1000) for row in statistics
         }
 
+    external_summaries = None
+    external_rows = load(run_dir / "external" / "external_signals.csv")
+    if external_rows:
+        from phaselock.experiments.detection import SourceSummary
+
+        grouped: dict[str, list[float]] = {}
+        for row in external_rows:
+            grouped.setdefault(row["statistic"], []).append(float(row["accuracy"]))
+        import statistics as _stats
+
+        external_summaries = [
+            SourceSummary(
+                source="dinov2", statistic=name, kind="phi",
+                mean=sum(values) / len(values),
+                std=_stats.pstdev(values) if len(values) > 1 else 0.0,
+                n_cells=len(values), best=max(values), best_label=f"dinov2/{name}",
+            )
+            for name, values in sorted(grouped.items())
+        ]
+
     sweep = load(run_dir / "sweep.csv") or None
-    written = render_all(rows, run_dir / "figures", external=external, sweep=sweep)
+    written = render_all(
+        rows, run_dir / "figures", summaries=summaries,
+        external_summaries=external_summaries, null=null,
+        steps_to_timestep=steps_to_timestep, sweep=sweep,
+    )
     print(f"\nwrote {len(written)} figures to {run_dir / 'figures'}")
     for path in written:
         print(f"  {path.name}")

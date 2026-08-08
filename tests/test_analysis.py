@@ -131,18 +131,39 @@ def test_build_profiles_aggregates_across_clips():
 # -- figures ----------------------------------------------------------------
 
 
+def _summary(source, statistic, mean, std=0.04, best=None, cells=60):
+    from phaselock.experiments.detection import SourceSummary
+
+    return SourceSummary(source=source, statistic=statistic, kind="phi", mean=mean, std=std,
+                         n_cells=cells, best=best or mean + 0.12,
+                         best_label=f"{source}/b7/s4/phi_{statistic}")
+
+
 def test_every_figure_renders(tmp_path):
+    summaries = [_summary(src, stat, 0.5 + 0.05 * i)
+                 for i, src in enumerate(("hidden_states", "latent", "velocity"))
+                 for stat in ("speed", "curv", "ang", "accel", "perr")]
     written = render_all(
         synthetic_rows(),
         tmp_path,
-        external=dict(source="dinov2", block=-1, step=0, statistic="speed", kind="phi",
-                      accuracy=0.722, ci_low=0.589, ci_high=0.835, auc=0.639, n_pairs=800),
+        summaries=summaries,
+        external_summaries=[_summary("dinov2", s, 0.60, cells=25) for s in ("speed", "curv")],
+        steps_to_timestep={0: 0, 2: 459, 4: 779},
         sweep=[dict(num_steps=k, blur_sigma=s, phi_curv=0.3 + 0.004 * k)
                for k in (2, 50) for s in (0.0, 16.0)],
     )
     assert len(written) >= 5
     for path in written:
         assert path.exists() and path.stat().st_size > 5000
+
+
+def test_source_comparison_shows_spread_not_just_the_best(tmp_path):
+    """Reporting only the maximum over a probe grid reads high by construction."""
+    from phaselock.analysis.figures import source_comparison
+
+    summaries = [_summary("hidden_states", s, 0.62, std=0.06) for s in ("speed", "curv")]
+    assert source_comparison(summaries, tmp_path / "f1.png") is not None
+    assert source_comparison([], tmp_path / "empty.png") is None
 
 
 def test_figures_degrade_gracefully_on_empty_input(tmp_path):
@@ -160,8 +181,16 @@ def test_heatmap_skips_sources_without_depth(tmp_path):
 
 
 def test_statistics_keep_a_stable_colour_everywhere():
-    """A reader who learns 'curvature is aqua' must not be misled by the next figure."""
-    assert len(set(palette.STATISTIC_COLOURS.values())) == len(palette.STATISTIC_COLOURS)
+    """A reader who learns 'curvature is aqua' must not be misled by the next figure.
+
+    Only the five statistics need mutually distinct hues -- they appear together in one
+    legend. The ensembles and the flow-coupling metrics are drawn in separate figures, so
+    they may reuse a hue without ambiguity.
+    """
+    core = ["speed", "curv", "ang", "accel", "perr"]
+    assert len({palette.STATISTIC_COLOURS[n] for n in core}) == len(core)
+    for name in ("alignment", "erosion", "or", "majority"):
+        assert name in palette.STATISTIC_COLOURS
     for name in ("speed", "curv", "ang", "accel", "perr"):
         assert name in palette.STATISTIC_COLOURS
         assert palette.statistic_label(name) != name

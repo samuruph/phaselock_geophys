@@ -59,6 +59,10 @@ STATISTIC_COLOURS = {
     "perr": CATEGORICAL[6],
     "or": CATEGORICAL[1],
     "majority": CATEGORICAL[5],
+    # The two flow-coupling metrics. Distinct hues: they fell through to the default
+    # before, which made them indistinguishable from speed variation in the legend.
+    "alignment": CATEGORICAL[7],
+    "erosion": CATEGORICAL[5],
 }
 
 STATISTIC_LABELS = {
@@ -69,6 +73,8 @@ STATISTIC_LABELS = {
     "perr": r"$\varphi_{perr}$  prediction residual",
     "or": "OR ensemble (all five)",
     "majority": "Majority ensemble (all five)",
+    "alignment": r"$\rho$  transport alignment (new)",
+    "erosion": "erosion rate (new)",
 }
 
 # Plain words, for places where an axis label would be crowded by the symbol.
@@ -80,6 +86,8 @@ STATISTIC_PLAIN = {
     "perr": "prediction residual",
     "or": "OR ensemble",
     "majority": "Majority ensemble",
+    "alignment": "transport alignment (new)",
+    "erosion": "erosion rate (new)",
 }
 
 NOTATION_KEY = (

@@ -217,6 +217,11 @@ class SelectionNull:
     p_value: float
     n_signals: int
     n_pairs: int
+    observed_mean: float = 0.0
+    mean_null_p95: float = 0.5
+    """Null for the *mean* across signals, which is far tighter than the null for the
+    maximum: averaging hundreds of cells cancels the noise that a maximum selects for.
+    Comparing a mean bar against the best-of-N floor understates it badly."""
 
     @property
     def significant(self) -> bool:
@@ -260,13 +265,18 @@ def selection_null(
     if n_pairs < 2:
         raise ValueError("need at least two pairs")
 
-    observed = float(((deltas > 0).mean(axis=1)).max())
+    per_signal = (deltas > 0).mean(axis=1)
+    observed = float(per_signal.max())
+    observed_mean = float(per_signal.mean())
 
     rng = np.random.default_rng(seed)
     maxima = np.empty(resamples)
+    means = np.empty(resamples)
     for index in range(resamples):
         signs = rng.choice([-1.0, 1.0], size=n_pairs)
-        maxima[index] = ((deltas * signs) > 0).mean(axis=1).max()
+        accuracy = ((deltas * signs) > 0).mean(axis=1)
+        maxima[index] = accuracy.max()
+        means[index] = accuracy.mean()
 
     return SelectionNull(
         observed=observed,
@@ -275,6 +285,8 @@ def selection_null(
         p_value=float((maxima >= observed).mean()),
         n_signals=n_signals,
         n_pairs=n_pairs,
+        observed_mean=observed_mean,
+        mean_null_p95=float(np.quantile(means, 0.95)),
     )
 
 
