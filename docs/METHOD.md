@@ -357,6 +357,15 @@ All take the pooled trajectory `Z` and the pooled flow `U = pool(u_θ)` at the s
 the same shape. Pooling is linear, so the pooled drift *is* the drift of the pooled
 trajectory — that is the whole reason this works.
 
+> **Which way time runs.** The plots put `t = 0` (clean video) on the left and
+> `t = 1000` (pure noise) on the right, because that is the order inversion visits them
+> in. The drift below runs the other way: it is `dz/dτ` oriented **noise → data**, the
+> direction the model actually *generates*, which is right to left on those axes. So
+> `ġ_σ < 0` at `t = 700` means "as the model refines through this point toward a clean
+> video, it is making the trajectory more regular". Reading it left to right inverts the
+> claim, and the claim is the whole point — PhaseLock's thesis is about what *refinement*
+> does to the motion prior.
+
 **Geometric drift, exact** — [`geometric_drift`](../phaselock/metrics/flow_geometry.py#L61)
 
 1. detach `Z`, clone it, set `requires_grad_(True)`
