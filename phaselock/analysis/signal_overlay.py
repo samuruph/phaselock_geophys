@@ -17,14 +17,17 @@ frame a violation happened is destroyed at that point, by design, because GeoPhy
 defined on a pooled per-frame trajectory. Recovering it would need `pooling="flatten"` and
 a re-run.
 
-*No per-video-frame curve.* `statistics.csv` stores the temporal *summaries* -- a mean or
-a standard deviation over the clip -- not the per-frame intermediates they summarise. So
-the x-axis here is the **denoising step**, not the video frame. Drawing `s_t` against
-video time would need `probe.save_trajectories = true` and a re-run.
+*Video time needs the trajectories.* `statistics.csv` stores the temporal *summaries* --
+a mean or a standard deviation over the clip -- and a mean cannot be inverted back into
+the values it came from. So from the CSV alone the x-axis can only be the **denoising
+step**. With `probe.save_trajectories = true` the full `(T, D)` arrays are on disk and
+:func:`per_video_frame` recovers the per-frame intermediates, which is what
+:func:`timeline_strips` plots against actual video time.
 
-What remains is still the useful comparison: how each statistic evolves as the trajectory
-is walked from clean toward noise, and where the violated clip separates from the
-plausible one.
+**The denoising axis runs `t = 0` (clean video) to `t = 1000` (pure noise).** Inversion
+starts at the clean latent and walks up, so `t = 0` is where it begins. The recorded
+points are not evenly spaced -- the sampler's own schedule is denser near the noise end --
+which is why the plotted ticks read 0, 251, 459, 586, ... rather than 0, 100, 200.
 """
 
 from __future__ import annotations
@@ -253,7 +256,7 @@ def signal_strip(
             axis.set_xlabel(f"correct at {correct}/{len(ticks)} steps",
                             fontsize=6.5, labelpad=1)
         else:
-            axis.set_xlabel("denoising timestep", fontsize=6.5, labelpad=1)
+            axis.set_xlabel("t:  0 = clean video  ->  1000 = noise", fontsize=6.5, labelpad=1)
 
         axis.set_title(palette.statistic_label(name), fontsize=7.5, pad=3)
         axis.tick_params(labelsize=6)
@@ -350,7 +353,7 @@ def animated_strips(
             axis.set_xlim(min(ticks.values()), max(ticks.values()))
             axis.set_ylim(*limits[name])
             axis.set_title(palette.statistic_label(name), fontsize=7.5, pad=3)
-            axis.set_xlabel("denoising timestep", fontsize=6.5, labelpad=1)
+            axis.set_xlabel("t:  0 = clean video  ->  1000 = noise", fontsize=6.5, labelpad=1)
             axis.tick_params(labelsize=6)
         axes[0][0].legend(fontsize=6.5, loc="best")
         if caption:
