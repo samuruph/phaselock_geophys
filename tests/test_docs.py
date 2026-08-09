@@ -81,3 +81,41 @@ def test_documented_test_count_is_current(doc):
         assert abs(int(value) - actual) <= 5, (
             f"{doc} claims {value} tests but {actual} are collected"
         )
+
+
+def test_signal_inventory_matches_what_the_code_emits():
+    """METHOD.md's signal count table has to stay true.
+
+    It is the reference for what every number in a run means, so a source or statistic
+    added without updating it would leave the doc quietly wrong.
+    """
+    from phaselock.metrics.geophys import STATISTICS
+    from phaselock.probes import SOURCES
+
+    text = (ROOT / "docs/METHOD.md").read_text()
+    inventory = text[text.index("## 4b. The full signal inventory") : text.index("## 5. Scoring")]
+
+    for name in STATISTICS:
+        assert f"`{name}`" in inventory, f"statistic {name} missing from the inventory"
+    for source in SOURCES:
+        if source == "attention":  # registered but not recorded by any experiment
+            continue
+        assert f"`{source}`" in inventory, f"source {source} missing from the inventory"
+    for extra in ("or", "majority", "alignment", "erosion"):
+        assert f"`{extra}`" in inventory, f"{extra} missing from the inventory"
+
+
+def test_signal_inventory_arithmetic_is_right():
+    """The worked example must actually add up, or it teaches the wrong thing."""
+    blocks, steps, phi_quantities, drift_quantities = 30, 10, 7, 5
+    total = (
+        blocks * steps * phi_quantities              # hidden_states phi
+        + blocks * (steps - 1) * drift_quantities    # hidden_states drift, empirical
+        + steps * phi_quantities                     # latent phi
+        + steps * drift_quantities                   # latent drift, exact -> no lost step
+        + steps * 2                                  # latent coupling
+        + 2 * (steps * phi_quantities                # x0_hat, velocity phi
+               + (steps - 1) * drift_quantities)     # ... and their empirical drift
+    )
+    assert total == 3820
+    assert "**3820**" in (ROOT / "docs/METHOD.md").read_text()

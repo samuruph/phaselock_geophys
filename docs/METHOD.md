@@ -188,6 +188,100 @@ This is a real limitation: the headline metric is exact precisely on the source
 (`latent`) that the Invisible Hand says carries no signal, and approximate on the source
 (`hidden_states`) that does.
 
+## 4b. The full signal inventory
+
+Every scored signal is one number per clip, addressed by
+**`(source, block, step, kind, statistic)`**. Nothing else is scored, and nothing scored
+is missing from this table.
+
+### The four axes
+
+| axis | values | what it selects |
+|---|---|---|
+| **source** | `hidden_states`, `latent`, `x0_hat`, `velocity` | *which tensor* inside the model the trajectory is read from |
+| **block** | `0 … L-1` for hidden states, `-1` otherwise | *how deep* in the transformer. Wan-1.3B has 30 blocks, CogVideoX-5B has 42. The other three sources exist once per step, not per block |
+| **step** | `0 … 9` | *when* along the denoising trajectory, `step 0` = clean, `step 9` ≈ pure noise. `tau = 1 - t/1000` is recorded alongside |
+| **kind** | `phi`, `drift`, `coupling` | *what kind of quantity* — a value, its rate of change, or a flow-coupling measure |
+
+### What each source is
+
+| source | tensor | shape after pooling | why it is in the study |
+|---|---|---|---|
+| `hidden_states` | output of DiT block `b` at step `s` | `(T, D)`, D = 1536 (Wan-1.3B) / 3072 (CogVideoX-5B) | the signal "The Invisible Hand of Physics" found linearly decodable |
+| `latent` | the sampler state `x_t` itself | `(T, C)`, C = 16 | the paper's **negative control** — reported at chance for linear probes. Also PhaseLock's space |
+| `x0_hat` | the model's estimate of the clean latent from `x_t` | `(T, C)` | what the model currently "believes" the video is |
+| `velocity` | `u_θ`, the PF-ODE drift | `(T, C)` | the flow field itself, and the input to every coupling metric |
+
+All four are spatially mean-pooled **inside the forward hook**, per latent frame, giving
+one vector per latent frame. A raw hidden state is ~100 MB; pooled it is ~64 KB.
+
+### The 12 quantities computed on each trajectory
+
+| kind | name | formula | reads as |
+|---|---|---|---|
+| `phi` | `speed` | `std({‖v_t‖})` | erratic step sizes |
+| `phi` | `curv` | `mean({θ_t})` | how sharply the path turns |
+| `phi` | `ang` | `std({θ_t})` | how *inconsistently* it turns |
+| `phi` | `accel` | `mean({‖a_t‖²})` | abrupt changes of motion |
+| `phi` | `perr` | `mean({‖ε_t‖})` | how much the clip surprises a predictor of its own past |
+| `phi` | `or` | `argmax_b │z_b│` over the five | ensemble: trust the most confident statistic |
+| `phi` | `majority` | `Σ_b z_b` over the five | ensemble: vote across all five |
+| `drift` | one per statistic | `ġ_σ = ⟨∇_z̄ φ_σ, ū_θ⟩` | is this denoising step *regularising* the trajectory (`<0`) or eroding it (`>0`)? |
+| `coupling` | `alignment` | `cos((Δz̄)_f, (Δū)_f)` | is the step growing the motion already there, or rewriting it? |
+| `coupling` | `erosion` | `‖Δū_f‖ / ‖Δz̄_f‖` | how fast motion is restructured relative to how much exists |
+
+`v_t`, `θ_t`, `a_t`, `ε_t` are the per-frame intermediates defined in §3. The two
+ensembles are GeoPhys's own; they combine the five `phi` statistics and so exist only for
+`kind = phi`.
+
+### Where the count comes from
+
+For a Wan run with 30 blocks and 10 recorded steps — the exact composition of the
+**3820** signals in `signals.csv`:
+
+| source | kind | cells | × quantities | signals | why this many cells |
+|---|---|---|---|---|---|
+| `hidden_states` | `phi` | 30 × 10 = 300 | 7 | **2100** | every block, every step |
+| `hidden_states` | `drift` | 30 × 9 = 270 | 5 | **1350** | 9, not 10: an *empirical* drift is a finite difference and needs the next step, so the last one has no successor |
+| `latent` | `phi` | 1 × 10 = 10 | 7 | 70 | not per-block |
+| `latent` | `drift` | 1 × 10 = 10 | 5 | 50 | 10, not 9: **exact** drift is an analytic gradient and needs no successor |
+| `latent` | `coupling` | 1 × 10 = 10 | 2 | 20 | only the ODE state gets coupling metrics |
+| `x0_hat` | `phi` | 10 | 7 | 70 | |
+| `x0_hat` | `drift` | 9 | 5 | 45 | empirical |
+| `velocity` | `phi` | 10 | 7 | 70 | |
+| `velocity` | `drift` | 9 | 5 | 45 | empirical |
+| | | | | **3820** | |
+
+Two asymmetries in that table are the exact/empirical distinction made concrete, and both
+are worth noticing:
+
+- **`latent` has 10 drift cells where the others have 9.** The latent *is* the ODE state,
+  so `ġ_σ` is a gradient evaluated at a point. Everywhere else it is a secant between two
+  recorded steps, and the last step has nothing to pair with.
+- **only `latent` has `coupling` rows at all.** Transport alignment and erosion rate are
+  defined against the flow field acting on the state; for a non-state source there is no
+  corresponding exact quantity, so they are not computed rather than approximated.
+
+On CogVideoX-5B, substitute 42 blocks for 30: `phi` becomes 42 × 10 × 7 = 2940 and
+`drift` 42 × 9 × 5 = 1890, for **5200** signals total.
+
+### Reading a signal name
+
+```
+hidden_states/b22/s4/phi_accel
+└─ source ──┘ └─┘ └┘ └─┘ └───┘
+              │    │   │    └─ statistic
+              │    │   └────── kind
+              │    └────────── recorded step 4 of 10
+              └─────────────── DiT block 22
+```
+
+`latent/s1/drift_curv` has no block segment, because that source is not per-block.
+
+> **This is a lot of signals for a small number of pairs**, and reporting the best one is
+> a selection procedure, not a result. See §6 for the permutation null that separates the
+> two, and note it needs *different* floors for a mean and for a maximum.
+
 ## 5. Scoring
 
 GeoPhys's rule, verbatim. For a matched pair `(V⁺, V⁻)` with `V⁻` violated:
