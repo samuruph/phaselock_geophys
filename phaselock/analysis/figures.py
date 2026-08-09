@@ -56,6 +56,8 @@ def source_comparison(
     null=None,
     external_pooling: str = "none",
     temporal_ratio: int = 4,
+    value_label: str = "pairwise detection accuracy (%)",
+    title: str = "Internal representations vs the external DINOv2 baseline",
 ) -> Optional[Path]:
     """Mean accuracy per (source, statistic) across the whole probe grid.
 
@@ -149,8 +151,8 @@ def source_comparison(
 
     palette.annotate_chance(axis, CHANCE)
     axis.set_xticks(positions, [palette.source_label(s) for s in sources], fontsize=8.5)
-    axis.set_ylabel("pairwise detection accuracy (%)")
-    axis.set_title("Internal representations vs the external DINOv2 baseline")
+    axis.set_ylabel(value_label)
+    axis.set_title(title)
 
     # Two legends. Colour says *which statistic*; the glyphs say *what a mark means*, and
     # without naming them the vertical whisker reads as an error bar or a noise floor when
@@ -936,6 +938,8 @@ def render_all(
     external_rows: Optional[Sequence[dict]] = None,
     external_pooling: str = "none",
     temporal_ratio: int = 4,
+    value_label: str = "pairwise detection accuracy (%)",
+    title: str = "Internal representations vs the external DINOv2 baseline",
 ) -> list[Path]:
     """Render the whole figure set.
 
@@ -955,7 +959,8 @@ def render_all(
     if summaries:
         add(source_comparison(summaries, directory / "01_source_comparison.png",
                               external=external_summaries, null=null,
-                              external_pooling=external_pooling, temporal_ratio=temporal_ratio))
+                              external_pooling=external_pooling, temporal_ratio=temporal_ratio,
+                              value_label=value_label, title=title))
     if external_summaries:
         add(external_comparison(external_summaries, directory / "02_external_baseline.png",
                                 pooling=external_pooling, temporal_ratio=temporal_ratio))

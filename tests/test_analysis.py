@@ -250,3 +250,30 @@ def test_generation_quality_returns_none_when_empty(tmp_path):
     from phaselock.analysis.figures import generation_quality
 
     assert generation_quality([], tmp_path / "g.png") is None
+
+
+def test_source_comparison_axis_and_title_are_overridable(tmp_path):
+    """Generation scores concordance with fidelity, not pairwise detection accuracy.
+
+    Reusing the figure with the detection label would put the wrong words on a real
+    number, which is worse than having no figure.
+    """
+    from dataclasses import dataclass
+
+    from phaselock.analysis.figures import source_comparison
+
+    @dataclass
+    class Summary:
+        source: str
+        statistic: str
+        kind: str
+        mean: float
+        std: float
+        best: float
+        n_cells: int
+
+    summaries = [Summary("hidden_states", n, "phi", 0.7, 0.05, 0.8, 10)
+                 for n in ("speed", "accel")]
+    path = source_comparison(summaries, tmp_path / "s.png",
+                             value_label="concordance (%)", title="Custom")
+    assert path is not None and path.is_file()

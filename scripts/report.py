@@ -137,14 +137,74 @@ def generation_report(run_dir: Path, figures: bool) -> None:
             print(f"  {column:<24}{stats.mean(values):8.4f} +/- {spread:.4f}"
                   f"   [{min(values):.4f}, {max(values):.4f}]")
 
+    ranked = load(run_dir / "signal_fidelity.csv")
+    if ranked:
+        print("\nSignals most predictive of fidelity  (negative rho = larger statistic "
+              "means worse match, the expected direction)")
+        print("-" * 78)
+        for row in sorted(ranked, key=lambda r: float(r["spearman_rho"]))[:12]:
+            block = "" if int(row["block"]) < 0 else f"/b{row['block']}"
+            label = f"{row['source']}{block}/s{row['step']}/{row['kind']}_{row['statistic']}"
+            print(f"  {label:<48} rho {float(row['spearman_rho']):+.3f}  (n={row['n_clips']})")
+    else:
+        print("\nno signal_fidelity.csv: a rank correlation needs at least 3 clips.")
+
     if figures:
-        from phaselock.analysis import generation_quality
+        from phaselock.analysis import generation_quality, render_all
 
         directory = run_dir / "figures"
         directory.mkdir(parents=True, exist_ok=True)
         produced = generation_quality(cells, directory / "01_generation_quality.png")
         if produced:
             print(f"\n  {produced.name}")
+
+        statistics = load(run_dir / "statistics.csv")
+        if ranked and statistics:
+            for path in generation_figures(ranked, statistics, directory):
+                print(f"  {path.relative_to(directory)}")
+
+
+def generation_figures(ranked, statistics, directory):
+    """The inversion figure set, on generation's own scoring.
+
+    Generation has no matched pair, so its signals are ranked by Spearman correlation
+    against ground-truth fidelity rather than by pairwise accuracy. Those live on
+    different scales, and rather than build a parallel set of figures the rho is mapped
+    onto the accuracy axis the existing ones already use:
+
+        accuracy = (1 - rho) / 2
+
+    which is the concordance probability -- the chance that a randomly chosen pair of
+    generations is ordered correctly by this signal. rho = -1, a signal that perfectly
+    predicts *worse* fidelity as it grows, becomes 100%; rho = 0 becomes 50%, chance, in
+    the same place the pairwise figures put it. The sign flip is deliberate: every
+    statistic is oriented so larger means less regular.
+    """
+    from phaselock.analysis import render_all
+    from phaselock.experiments.detection import SignalKey, summarise_grid
+    from phaselock.metrics.scoring import PairwiseResult
+
+    results, rows = {}, []
+    for row in ranked:
+        rho = float(row["spearman_rho"])
+        accuracy = (1.0 - rho) / 2.0
+        key = SignalKey(row["source"], int(row["block"]), int(row["step"]),
+                        row["statistic"], row["kind"])
+        results[key] = PairwiseResult(accuracy, accuracy, accuracy, int(row["n_clips"]))
+        rows.append({
+            "source": key.source, "block": key.block, "step": key.step,
+            "statistic": key.statistic, "kind": key.kind, "accuracy": accuracy,
+            "ci_low": accuracy, "ci_high": accuracy, "auc": "",
+            "n_pairs": int(row["n_clips"]),
+        })
+
+    steps = {int(r["step"]): round((1.0 - float(r["tau"])) * 1000) for r in statistics}
+    return render_all(
+        rows, directory, summaries=summarise_grid(results),
+        steps_to_timestep=steps, statistics_rows=statistics,
+        value_label="concordance with ground-truth fidelity (%)",
+        title="Which signal predicts a faithful generation?",
+    )
 
 
 def external_dir(run_dir: Path) -> tuple[Path, str]:

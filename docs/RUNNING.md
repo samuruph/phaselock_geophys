@@ -60,7 +60,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 332 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 333 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
