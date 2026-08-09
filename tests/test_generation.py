@@ -282,3 +282,63 @@ def test_blur_survival_skips_incomplete_sweeps():
 def test_default_sweep_matches_the_papers_settings():
     assert DEFAULT_STEPS == (2, 10, 30, 50)
     assert DEFAULT_BLUR == (0.0, 8.0, 16.0)
+
+
+def test_statistics_from_record_works_without_a_pair():
+    """Generation has no matched pair, and must still produce the inversion schema."""
+    from phaselock.datasets import VideoSample
+    from phaselock.experiments.detection import statistics_from_record
+    from phaselock.probes import LATENT, ProbeRecord, TrajectoryKey
+
+    record = ProbeRecord(
+        trajectories={TrajectoryKey(LATENT, -1, 0): torch.randn(8, 6)},
+        taus={0: 0.5},
+        provenance={},
+    )
+    sample = VideoSample(sample_id="ball_drop/000/valid", path="x.mp4", label=0,
+                         group="g", dataset="likephys", meta={"scenario": "ball_drop"})
+
+    rows = statistics_from_record(record, sample)
+    assert rows and rows[0].scenario == "ball_drop"
+    assert rows[0].violation == "", "generated clips have no violation"
+    assert set(rows[0].statistics) == {"speed", "curv", "ang", "accel", "perr"}
+
+
+def test_spearman_endpoints_and_ties():
+    from phaselock.experiments.generation import spearman
+
+    assert spearman([1, 2, 3, 4], [1, 2, 3, 4]) == pytest.approx(1.0)
+    assert spearman([1, 2, 3, 4], [4, 3, 2, 1]) == pytest.approx(-1.0)
+    # A constant series has no ranking to correlate with.
+    assert spearman([1, 1, 1, 1], [1, 2, 3, 4]) != spearman([1, 1, 1, 1], [1, 2, 3, 4])
+
+
+def test_score_against_fidelity_finds_the_predictive_signal():
+    """A signal that tracks fidelity must rank ahead of one that does not.
+
+    Negative rho is the useful direction: every statistic is oriented so larger means
+    less regular, so a good detector gives *worse* fidelity as it grows.
+    """
+    from phaselock.experiments.generation import score_against_fidelity
+
+    fidelity = {f"c{i}": 1.0 - 0.1 * i for i in range(6)}
+    statistics = []
+    for sample, score in fidelity.items():
+        statistics.append({
+            "sample_id": sample, "source": "hidden_states", "block": "3", "step": "0",
+            "phi_accel": str(1.0 - score),      # tracks fidelity inversely -> rho ~ -1
+            "phi_curv": str(hash(sample) % 7),  # unrelated
+        })
+    candidates = [{"sample_id": s, "raw_score": str(v)} for s, v in fidelity.items()]
+
+    ranked = score_against_fidelity(statistics, candidates)
+    assert ranked, "expected some scored signals"
+    assert ranked[0].statistic == "accel", [r.statistic for r in ranked]
+    assert ranked[0].rho < -0.9, ranked[0].rho
+
+
+def test_score_against_fidelity_needs_ground_truth():
+    from phaselock.experiments.generation import score_against_fidelity
+
+    assert score_against_fidelity([{"sample_id": "c", "source": "x", "block": "0",
+                                    "step": "0", "phi_accel": "1"}], []) == []

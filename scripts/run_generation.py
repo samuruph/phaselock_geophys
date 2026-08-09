@@ -33,7 +33,10 @@ from phaselock.backends import load_backend
 from phaselock.config import parse_overrides
 from phaselock.datasets import LikePhys
 from phaselock.experiments.generation import best_of_n, generate_candidate
+from phaselock.experiments.detection import statistics_from_record
+from phaselock.experiments.generation import score_against_fidelity
 from phaselock.metrics.geophys import geophys_statistics
+from phaselock.probes import StatisticRow
 from phaselock.probes import LATENT
 from phaselock.utils import resolve_dtype
 
@@ -107,7 +110,7 @@ def main() -> None:
         enable_offload=config.backend.offload,
     )
 
-    rows, selection = [], []
+    rows, selection, statistics = [], [], []
     for index, clip in enumerate(clips, start=1):
         candidates = [
             generate_candidate(
@@ -118,6 +121,19 @@ def main() -> None:
             for offset in range(n)
         ]
         rows.extend(candidate.flatten() for candidate in candidates)
+        # The same per-(source, block, step) table the inversion stage writes. Generation
+        # was recording every probe and keeping one verifier scalar, throwing thousands of
+        # signals away; they are the whole point of probing during generation at all.
+        for candidate in candidates:
+            if candidate.record is None:
+                continue
+            statistics.extend(
+                row.flatten()
+                for row in statistics_from_record(
+                    candidate.record, clip,
+                    order=config.metrics.ar_order, fit=config.metrics.residual_fit,
+                )
+            )
 
         if n > 1:
             scores = [
@@ -141,6 +157,31 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     logger.info("wrote %s", output / "candidates.csv")
+
+    if statistics:
+        with open(output / "statistics.csv", "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=StatisticRow.fieldnames())
+            writer.writeheader()
+            writer.writerows(statistics)
+        logger.info("wrote %s (%d rows)", output / "statistics.csv", len(statistics))
+
+        # No matched pair exists here, so pairwise accuracy does not apply. Ground truth
+        # does: rank every signal by how well it predicts fidelity to the real
+        # continuation, which is the question a verifier actually has to answer.
+        ranked = score_against_fidelity(statistics, rows)
+        if ranked:
+            with open(output / "signal_fidelity.csv", "w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(ranked[0].flatten()))
+                writer.writeheader()
+                writer.writerows(item.flatten() for item in ranked)
+            logger.info("wrote %s (%d signals)", output / "signal_fidelity.csv", len(ranked))
+            print("\nSignals most predictive of fidelity (negative = larger statistic "
+                  "means worse match, the expected direction)")
+            print("-" * 78)
+            for item in ranked[:10]:
+                block = "" if item.block < 0 else f"/b{item.block}"
+                label = f"{item.source}{block}/s{item.step}/{item.kind}_{item.statistic}"
+                print(f"  {label:<48} rho {item.rho:+.3f}  (n={item.n})")
 
     if selection:
         report_selection(selection, output, args)

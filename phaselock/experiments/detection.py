@@ -74,7 +74,7 @@ class SignalKey:
 def statistics_from_record(
     record: ProbeRecord,
     sample: VideoSample,
-    pair: VideoPair,
+    pair: Optional[VideoPair] = None,
     order: int = 3,
     fit: str = "span",
 ) -> list[StatisticRow]:
@@ -83,7 +83,14 @@ def statistics_from_record(
     Exact flow coupling is computed only for the latent, which is the ODE state; every
     other source gets the finite-difference estimator across consecutive recorded steps,
     tagged so the two are never aggregated together.
+
+    ``pair`` is optional because generation has no matched pair: it conditions on a valid
+    clip and there is nothing to contrast against within the run. The scenario then comes
+    from the sample itself and the violation field is empty, so a generation run produces
+    exactly the same schema and every downstream reader keeps working.
     """
+    scenario = pair.scenario if pair is not None else sample.meta.get("scenario", "")
+    violation = pair.violation if pair is not None else ""
     rows: list[StatisticRow] = []
     steps = record.steps
 
@@ -132,8 +139,8 @@ def statistics_from_record(
                         sample_id=sample.sample_id,
                         label=sample.label,
                         group=sample.group,
-                        scenario=pair.scenario,
-                        violation=pair.violation,
+                        scenario=scenario,
+                        violation=violation,
                         source=source,
                         block=block,
                         step=step,

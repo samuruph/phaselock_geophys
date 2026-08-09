@@ -18,6 +18,7 @@ Sampling is plain baseline throughout. PhaseLock guidance is never applied.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -198,3 +199,105 @@ def best_of_n(
     selected = candidates[min(range(len(scores)), key=scores.__getitem__)]
     oracle = max(candidates, key=lambda candidate: candidate.scores.raw_score)
     return selected, candidates[0], oracle
+
+
+@dataclass(frozen=True)
+class SignalFidelity:
+    """How well one signal predicts a generation's fidelity to the real continuation."""
+
+    source: str
+    block: int
+    step: int
+    statistic: str
+    kind: str
+    rho: float
+    """Spearman correlation against ``raw_score``. Negative is the *useful* direction:
+    every statistic is oriented so larger means less regular, and a less regular
+    trajectory should correspond to a *worse* match to the real physics."""
+
+    n: int
+
+    def flatten(self) -> dict[str, Any]:
+        return {
+            "source": self.source, "block": self.block, "step": self.step,
+            "statistic": self.statistic, "kind": self.kind,
+            "spearman_rho": self.rho, "n_clips": self.n,
+        }
+
+
+def _rank(values: Sequence[float]) -> "list[float]":
+    """Average ranks, so ties do not bias the correlation."""
+    order = sorted(range(len(values)), key=values.__getitem__)
+    ranks = [0.0] * len(values)
+    index = 0
+    while index < len(order):
+        stop = index
+        while stop + 1 < len(order) and values[order[stop + 1]] == values[order[index]]:
+            stop += 1
+        shared = (index + stop) / 2.0 + 1.0
+        for position in range(index, stop + 1):
+            ranks[order[position]] = shared
+        index = stop + 1
+    return ranks
+
+
+def spearman(a: Sequence[float], b: Sequence[float]) -> float:
+    """Spearman rank correlation. Rank-based because the statistics are not linear in
+    fidelity and their scales differ by orders of magnitude."""
+    if len(a) != len(b):
+        raise ValueError(f"length mismatch: {len(a)} vs {len(b)}")
+    if len(a) < 3:
+        return float("nan")
+    x, y = _rank(list(a)), _rank(list(b))
+    mx, my = sum(x) / len(x), sum(y) / len(y)
+    dx = [v - mx for v in x]
+    dy = [v - my for v in y]
+    denominator = (sum(v * v for v in dx) * sum(v * v for v in dy)) ** 0.5
+    if denominator < 1e-12:
+        return float("nan")
+    return sum(p * q for p, q in zip(dx, dy)) / denominator
+
+
+def score_against_fidelity(
+    statistics: Sequence[dict], candidates: Sequence[dict]
+) -> list[SignalFidelity]:
+    """Rank every signal by how well it predicts ground-truth fidelity.
+
+    Generation has no matched pair, so pairwise accuracy does not apply: there is no
+    violated counterpart to contrast a clip against. What there *is* instead is ground
+    truth -- the real continuation of the same first frame -- and the motion-mask score
+    against it. So the question becomes the one that actually matters for a verifier:
+    **does this geometric signal know which generations came out physically faithful?**
+
+    Reported as Spearman rather than a linear correlation because the statistics are not
+    linear in fidelity and their scales differ by orders of magnitude. Negative rho is the
+    useful direction, since every statistic is oriented so larger means less regular.
+    """
+    fidelity = {row["sample_id"]: float(row["raw_score"]) for row in candidates
+                if row.get("raw_score") not in (None, "")}
+    if not fidelity:
+        return []
+
+    grouped: dict[tuple, dict[str, float]] = defaultdict(dict)
+    for row in statistics:
+        sample = row["sample_id"]
+        if sample not in fidelity:
+            continue
+        for column, value in row.items():
+            if not (column.startswith("phi_") or column.startswith("drift_")):
+                continue
+            if value in (None, "") or column.endswith("_estimator"):
+                continue
+            kind, _, statistic = column.partition("_")
+            key = (row["source"], int(row["block"]), int(row["step"]), statistic, kind)
+            grouped[key][sample] = float(value)
+
+    out: list[SignalFidelity] = []
+    for (source, block, step, statistic, kind), by_sample in grouped.items():
+        shared = sorted(set(by_sample) & set(fidelity))
+        if len(shared) < 3:
+            continue
+        rho = spearman([by_sample[s] for s in shared], [fidelity[s] for s in shared])
+        if rho == rho:  # not NaN
+            out.append(SignalFidelity(source, block, step, statistic, kind, rho, len(shared)))
+    return sorted(out, key=lambda item: item.rho)
