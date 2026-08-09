@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
 import pytest
 import torch
@@ -241,3 +243,36 @@ def test_spread_leaves_uncovered_frames_as_nan():
     out = signal_overlay._spread_over_span(np.array([1.0]), "speed", 21, spec, order=3)
     assert not np.isnan(out[0]), "latent 0 is covered"
     assert np.isnan(out[-1]), "the tail has no value and must not be invented"
+
+
+def test_timeline_accepts_a_single_series_for_a_generated_clip():
+    """A generation has no counterpart, so one curve is a legitimate input.
+
+    Inventing a comparison, or labelling the lone series 'plausible', would both be worse
+    than drawing one line and saying so.
+    """
+    import matplotlib.pyplot as plt
+
+    one = {name: _frames(2.0, n=16) for name in signal_overlay.PER_FRAME}
+    captured = []
+    original = plt.Axes.legend
+
+    def record(self, *args, **kwargs):
+        handles, labels = self.get_legend_handles_labels()
+        captured.extend(labels)
+        return original(self, *args, **kwargs)
+
+    plt.Axes.legend = record
+    try:
+        import tempfile
+
+        path = signal_overlay.timeline_figure(
+            one, None, pathlib.Path(tempfile.mkdtemp()) / "g.png",
+            series_label="generated",
+        )
+    finally:
+        plt.Axes.legend = original
+
+    assert path is not None and path.is_file()
+    assert "generated" in captured, captured
+    assert "violated" not in captured, "no counterpart exists to draw"

@@ -154,7 +154,7 @@ def generation_report(run_dir: Path, figures: bool) -> None:
 
         directory = run_dir / "figures"
         directory.mkdir(parents=True, exist_ok=True)
-        produced = generation_quality(cells, directory / "01_generation_quality.png")
+        produced = generation_quality(cells, directory / "00_generation_quality.png")
         if produced:
             print(f"\n  {produced.name}")
 

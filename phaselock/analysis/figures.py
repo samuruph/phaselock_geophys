@@ -214,6 +214,7 @@ def source_comparison(
 def external_comparison(
     summaries: Sequence[Any], path: Path, internal: Optional[Sequence[Any]] = None,
     pooling: str = "none", temporal_ratio: int = 4,
+    value_label: str = "pairwise detection accuracy (%)",
 ) -> Optional[Path]:
     """The external DINOv2 path, kept in its own figure.
 
@@ -245,7 +246,7 @@ def external_comparison(
     palette.annotate_chance(axis, CHANCE)
     axis.set_xticks(np.arange(len(names)), [palette.statistic_plain(n) for n in names],
                     fontsize=8, rotation=15, ha="right")
-    axis.set_ylabel("pairwise detection accuracy (%)")
+    axis.set_ylabel(value_label)
     axis.set_title("External baseline — frozen DINOv2 (the published GeoPhys method)")
     axis.grid(axis="x", visible=False)
     palette.caption(
@@ -264,7 +265,8 @@ def external_comparison(
 
 
 def depth_profile(
-    rows: Sequence[dict], path: Path, source: str = "hidden_states", kind: str = "phi"
+    rows: Sequence[dict], path: Path, source: str = "hidden_states", kind: str = "phi",
+    value_label: str = "pairwise detection accuracy (%)",
 ) -> Optional[Path]:
     """Accuracy against block index: mean across denoising steps, with the spread shaded.
 
@@ -310,7 +312,7 @@ def depth_profile(
               fontsize=8, color=palette.TEXT_MUTED)
 
     axis.set_xlabel(f"{palette.source_label(source)} — block index (0 = input side)")
-    axis.set_ylabel("pairwise detection accuracy (%)")
+    axis.set_ylabel(value_label)
     axis.set_title(f"Where in depth is plausibility readable? — {palette.source_label(source)}")
     axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=4, fontsize=8)
     palette.caption(
@@ -438,7 +440,8 @@ def depth_time_heatmaps(
 
 
 def statistic_comparison(
-    rows: Sequence[dict], path: Path, source: str = "hidden_states", kind: str = "phi"
+    rows: Sequence[dict], path: Path, source: str = "hidden_states", kind: str = "phi",
+    value_label: str = "pairwise detection accuracy (%)",
 ) -> Optional[Path]:
     """Accuracy per geometric statistic for one source: mean, spread and best.
 
@@ -496,7 +499,7 @@ def statistic_comparison(
                     [palette.statistic_plain(n) for n in names],
                     fontsize=8, rotation=20, ha="right")
     axis.set_ylim(0, max(105, float(bests.max()) + 8))
-    axis.set_ylabel("pairwise detection accuracy (%)")
+    axis.set_ylabel(value_label)
     axis.set_title(f"Which statistic carries the signal? — {palette.source_label(source)}")
     axis.grid(axis="x", visible=False)
     palette.caption(
@@ -514,7 +517,10 @@ def statistic_comparison(
 # -- F5: statistic vs its rate of change under the flow ---------------------
 
 
-def drift_comparison(rows: Sequence[dict], path: Path) -> Optional[Path]:
+def drift_comparison(
+    rows: Sequence[dict], path: Path,
+    value_label: str = "pairwise detection accuracy (%)",
+) -> Optional[Path]:
     """The statistic against its geometric drift, at the same probe location.
 
     Asks whether a violated clip is better identified by *what* the geometry is, or by
@@ -558,7 +564,7 @@ def drift_comparison(rows: Sequence[dict], path: Path) -> Optional[Path]:
                       fontsize=7, color=palette.TEXT_SECONDARY)
 
     axis.set_ylim(0, 105)
-    axis.set_ylabel("pairwise detection accuracy (%)")
+    axis.set_ylabel(value_label)
     axis.set_title("Is the geometry more telling than its rate of change under the flow?")
     axis.legend(loc="upper right")
     axis.grid(axis="x", visible=False)
@@ -964,7 +970,8 @@ def render_all(
     if external_summaries:
         add(external_comparison(external_summaries, directory / "02_external_baseline.png",
                                 pooling=external_pooling, temporal_ratio=temporal_ratio))
-    add(drift_comparison(rows, directory / "03_statistic_vs_drift.png"))
+    add(drift_comparison(rows, directory / "03_statistic_vs_drift.png",
+                         value_label=value_label))
     if sweep:
         add(step_sweep(sweep, directory / "04_step_sweep.png"))
     if latent_profiles:
@@ -982,8 +989,9 @@ def render_all(
         folder = directory / source
         folder.mkdir(parents=True, exist_ok=True)
         add(statistic_comparison(combined_rows, folder / "01_statistic_comparison.png",
-                                 source=source))
-        add(depth_profile(combined_rows, folder / "02_depth_profile.png", source=source))
+                                 source=source, value_label=value_label))
+        add(depth_profile(combined_rows, folder / "02_depth_profile.png", source=source,
+                          value_label=value_label))
         add(depth_time_heatmaps(combined_rows, folder / "03_depth_vs_time.png", source=source,
                                 steps_to_timestep=steps_to_timestep))
         if combined_statistics:

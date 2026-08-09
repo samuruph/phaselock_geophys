@@ -425,6 +425,7 @@ def _draw_timeline(
     violated: Mapping[str, np.ndarray],
     limits: Mapping[str, tuple[float, float]],
     playhead: Optional[int] = None,
+    series_label: str = "plausible",
 ) -> None:
     """One panel per signal: both clips, plus the signed gap filled against zero.
 
@@ -441,6 +442,9 @@ def _draw_timeline(
         axis.clear()
         low, high = plausible.get(name), violated.get(name)
 
+        # A generation has no counterpart to contrast against, so a single series is a
+        # legitimate input: draw the signal, skip the delta, and do not pretend there is
+        # a comparison.
         if low is not None and high is not None and len(low) == len(high):
             frames = np.arange(len(low))
             delta = high - low
@@ -455,7 +459,7 @@ def _draw_timeline(
                          linestyle=(0, (3, 3)), zorder=1)
 
         for series, colour, label in (
-            (low, PLAUSIBLE_COLOUR, "plausible"),
+            (low, PLAUSIBLE_COLOUR, series_label),
             (high, VIOLATED_COLOUR, "violated"),
         ):
             if series is None:
@@ -494,12 +498,20 @@ def _timeline_limits(
 
 def timeline_figure(
     plausible: Mapping[str, np.ndarray],
-    violated: Mapping[str, np.ndarray],
-    path: Path,
+    violated: Optional[Mapping[str, np.ndarray]] = None,
+    path: Path = None,
     title: str = "",
     caption: str = "",
+    series_label: str = "plausible",
 ) -> Optional[Path]:
-    """Static version: every per-frame signal with its delta, one panel each."""
+    """Static version: every per-frame signal, one panel each.
+
+    ``violated`` is optional. With it, both curves are drawn and the signed gap filled --
+    the paired case. Without it, a single trajectory is drawn on its own, which is what a
+    *generated* clip needs: there is nothing to contrast it against, and inventing a
+    comparison would be worse than showing one line.
+    """
+    violated = violated or {}
     import matplotlib.pyplot as plt
 
     names = [n for n in PER_FRAME if n in plausible or n in violated]
@@ -509,15 +521,22 @@ def timeline_figure(
     palette.apply_style()
     figure, axes = plt.subplots(1, len(names), figsize=(4.0 * len(names), 3.6), squeeze=False)
     _draw_timeline(axes[0], names, plausible, violated,
-                   _timeline_limits(names, plausible, violated))
+                   _timeline_limits(names, plausible, violated),
+                   series_label=series_label)
     axes[0][0].legend(fontsize=7.5, loc="upper left")
     if title:
         figure.suptitle(title, x=0.01, ha="left", fontweight="bold")
-    palette.caption(figure, caption or (
+    default = (
         "Per-frame signal for both clips, with the signed gap filled against the panel "
         "floor. Positive fill = the violated clip scores higher, which is the detector "
-        "calling that frame correctly. Values are per latent frame, held across the four "
-        "video frames each latent encodes, so the curves are step functions."
+        "calling that frame correctly. "
+    ) if violated else (
+        "Per-frame signal for the generated clip. No counterpart exists to compare it "
+        "against, so there is no gap to fill. "
+    )
+    palette.caption(figure, caption or default + (
+        "Values are per latent frame, held across the four video frames each latent "
+        "encodes, so the curves are step functions."
     ))
     figure.tight_layout(rect=(0, 0.06, 1, 0.94 if title else 1))
     path.parent.mkdir(parents=True, exist_ok=True)
