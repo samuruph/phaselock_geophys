@@ -60,7 +60,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 337 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 338 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
@@ -472,6 +472,12 @@ default `mp4v` is MPEG-4 Part 2, which Chromium cannot decode — those files pl
 and render as green mush everywhere else.
 
 ### Seeing the signals under the video
+
+Works for inversion runs (paired: plausible vs violated, with the gap filled) and for
+generation runs (a single series -- there is no counterpart to contrast a generated clip
+against). Both need `probe.save_trajectories=true` for the per-video-frame view; without
+it the x-axis falls back to the denoising step.
+
 
 ```bash
 python scripts/annotate_videos.py <run_dir>

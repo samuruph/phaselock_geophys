@@ -82,6 +82,9 @@ def main() -> None:
     output = config.output.dir()
     config.save(output / "config.json")
     video_dir = config.output.dir("videos") if args.save_videos else None
+    # Needed for the per-frame timeline figures: statistics.csv keeps only each clip's
+    # temporal summary, and a mean cannot be inverted into the values behind it.
+    trajectory_dir = config.output.dir("trajectories") if config.probe.save_trajectories else None
 
     dataset = LikePhys(**({"root": config.data.root} if config.data.root else {}))
     clips = dataset.valid_clips()
@@ -127,6 +130,13 @@ def main() -> None:
         for candidate in candidates:
             if candidate.record is None:
                 continue
+            if trajectory_dir is not None:
+                # Named by (clip, seed) rather than clip alone: best-of-N writes several
+                # candidates per clip and they must not overwrite each other.
+                candidate.record.save(
+                    trajectory_dir
+                    / f"{clip.sample_id.replace('/', '_')}_s{candidate.seed}"
+                )
             statistics.extend(
                 row.flatten()
                 for row in statistics_from_record(

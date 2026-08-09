@@ -551,6 +551,7 @@ def timeline_strips(
     width_px: int,
     caption: str = "",
     dpi: int = 100,
+    series_label: str = "plausible",
 ) -> list[np.ndarray]:
     """One strip per video frame, x = **video frame**, with a playhead that tracks it.
 
@@ -575,7 +576,8 @@ def timeline_strips(
     )
     out: list[np.ndarray] = []
     for frame in range(frames):
-        _draw_timeline(axes[0], names, plausible, violated, limits, playhead=frame)
+        _draw_timeline(axes[0], names, plausible, violated, limits, playhead=frame,
+                       series_label=series_label)
         axes[0][0].legend(fontsize=6, loc="upper left")
         if caption:
             palette.caption(figure, caption)

@@ -68,8 +68,6 @@ def main() -> None:
     print(f"drawing {source} block {block} over {len({r['step'] for r in rows})} steps")
 
     config = json.loads((run / "config.json").read_text())
-    dataset = get_paired_dataset(config["data"]["name"])
-    pairs = dataset.select(limit=config["data"]["limit"], seed=config["data"]["seed"])
 
     # Trajectories are what make video time a usable axis: statistics.csv only keeps the
     # per-clip summaries, and a mean cannot be inverted into the values behind it.
@@ -80,6 +78,15 @@ def main() -> None:
 
         spec = get_spec(config["backend"]["name"])
         print(f"found trajectories: also drawing per-video-frame signals")
+
+    # A generation run has no matched pairs -- it conditions on valid clips only -- so it
+    # gets a single-series timeline per clip instead of a paired comparison.
+    if (run / "candidates.csv").is_file() and not (run / "signals.csv").is_file():
+        annotate_generation(run, videos, rows, source, spec, trajectories, args)
+        return
+
+    dataset = get_paired_dataset(config["data"]["name"])
+    pairs = dataset.select(limit=config["data"]["limit"], seed=config["data"]["seed"])
 
     written = 0
     for pair in pairs:
@@ -171,6 +178,65 @@ def main() -> None:
             written += 1
 
     print(f"\n{written} annotated videos in {videos}")
+
+
+def annotate_generation(run, videos, rows, source, spec, trajectories, args) -> None:
+    """Per-clip signal figures for a generation run.
+
+    Generation conditions on valid clips, so there is nothing to contrast a clip against
+    within the run: no pair, no delta, one curve. The comparison that *does* exist is
+    against ground-truth fidelity, and that lives in `signal_fidelity.csv` rather than in
+    a figure drawn over the video.
+    """
+    from phaselock.probes import ProbeRecord
+
+    written = 0
+    for sample_id in sorted({row["sample_id"] for row in rows}):
+        stem = sample_id.replace("/", "_")
+
+        if spec is not None:
+            # Generation names trajectories by (clip, seed) because best-of-N writes
+            # several per clip; take whichever candidates exist.
+            for path in sorted(trajectories.glob(f"{stem}_s*.npz")):
+                series = signal_overlay.per_video_frame(
+                    ProbeRecord.load(path.with_suffix("")), spec, source)
+                if not series:
+                    continue
+                figure = signal_overlay.timeline_figure(
+                    series, None, videos / f"{path.stem}_timeline.png",
+                    title=f"{sample_id}  ({source})", series_label="generated")
+                if figure:
+                    print(f"  wrote {figure.name}")
+                    written += 1
+
+        # Attach the same curves under the side-by-side generation video.
+        for candidate in sorted(videos.glob(f"{stem}_*_generation.mp4")):
+            record = next(iter(sorted(trajectories.glob(f"{stem}_s*.npz"))), None)
+            if spec is None or record is None:
+                continue
+            series = signal_overlay.per_video_frame(
+                ProbeRecord.load(record.with_suffix("")), spec, source)
+            if not series:
+                continue
+            import cv2
+
+            capture = cv2.VideoCapture(str(candidate))
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            capture.release()
+            strips = signal_overlay.timeline_strips(
+                series, {}, width, series_label="generated",
+                caption=(
+                    f"Per-frame signal of the generated clip from {source}, averaged over "
+                    f"depth. No counterpart exists to compare against, so there is no gap "
+                    f"to fill. The line marks the frame above."
+                ))
+            out = signal_overlay.attach_animated(
+                candidate, candidate.with_name(candidate.stem + "_signals.mp4"),
+                strips, fps=args.fps)
+            print(f"  wrote {out.name}")
+            written += 1
+
+    print(f"\n{written} annotated artefacts in {videos}")
 
 
 if __name__ == "__main__":

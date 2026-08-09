@@ -276,3 +276,11 @@ def test_timeline_accepts_a_single_series_for_a_generated_clip():
     assert path is not None and path.is_file()
     assert "generated" in captured, captured
     assert "violated" not in captured, "no counterpart exists to draw"
+
+
+def test_timeline_strips_accept_a_single_series():
+    """The animated twin must take the same lone-series input the static figure does."""
+    one = {name: _frames(2.0, n=12) for name in signal_overlay.PER_FRAME}
+    strips = signal_overlay.timeline_strips(one, {}, width_px=600, series_label="generated")
+    assert len(strips) == 12
+    assert strips[0].shape[1] == 600
