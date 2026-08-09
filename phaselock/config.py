@@ -65,6 +65,20 @@ class DataConfig:
     blur_sigma: float = 0.0
     """Gaussian blur applied to every arm, including the reference. PhaseLock's control."""
 
+    height: Optional[int] = None
+    width: Optional[int] = None
+    """Override the backend's native frame size. ``None`` uses the spec.
+
+    Worth setting for a square source. LikePhys is 512x512 and Wan's native 480x832
+    letterboxes it to 42% black padding, which costs real compute: measured on one clip,
+    480x832 took 248 s against 147 s at 512x512, a 40% saving, because the padding is a
+    third of the token grid. Both are legal -- the only constraint is a multiple of
+    ``spatial_ratio * patch_size``, 16 for both backends.
+
+    Not free of consequences: 512x512 is off Wan's trained aspect ratio and inverted to
+    41.3 dB against a 52.8 dB VAE ceiling, where letterboxed 480x832 reached 42.6 dB
+    against 49.7 dB. Better absolute number, worse gap. Sweep it rather than assume."""
+
 
 @dataclass(frozen=True)
 class ProbeConfig:

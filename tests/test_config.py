@@ -161,3 +161,41 @@ def test_output_segments_are_not_overridden_when_set_explicitly(tmp_path):
                   output__backend="custom", output__dataset="other",
                   output__name="run", output__root=str(tmp_path))
     assert config.output.base() == tmp_path / "custom" / "other" / "run"
+
+
+def test_frame_geometry_defaults_to_the_backend_spec():
+    from phaselock.backends import get_spec
+    from phaselock.experiments.detection import frame_geometry
+
+    spec = get_spec("wan21_t2v_1_3b")
+    assert frame_geometry(spec, load(None)) == (
+        spec.default_num_frames, spec.default_height, spec.default_width
+    )
+
+
+def test_frame_geometry_honours_a_resolution_override():
+    """A square source wastes 42% of the token grid on black under Wan's 480x832.
+
+    Overriding to the source's own 512x512 removes the padding and, measured, a 40% of
+    the per-clip cost with it.
+    """
+    from phaselock.backends import get_spec
+    from phaselock.experiments.detection import frame_geometry
+
+    spec = get_spec("wan21_t2v_1_3b")
+    config = load(None, data__height="512", data__width="512")
+    frames, height, width = frame_geometry(spec, config)
+    assert (height, width) == (512, 512)
+    assert frames == spec.default_num_frames, "frame count is a hard 4k+1 constraint"
+
+
+def test_resolution_override_must_stay_legal_for_the_patch_grid():
+    """Both backends patchify 2x2 over an 8x-downsampling VAE, so any override has to be
+    a multiple of 16 or the reshape in pooling stops being exact."""
+    from phaselock.backends import get_spec
+
+    spec = get_spec("wan21_t2v_1_3b")
+    multiple = spec.spatial_ratio * spec.patch_size[1]
+    assert multiple == 16
+    for size in (512, 480, 832):
+        assert size % multiple == 0, f"{size} is not a legal frame size"

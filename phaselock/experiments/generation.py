@@ -79,19 +79,26 @@ def frames_to_tensor(frames: Any) -> torch.Tensor:
 
 
 def reference_continuation(
-    sample: VideoSample, backend: VideoBackend, blur_sigma: float = 0.0
+    sample: VideoSample, backend: VideoBackend, blur_sigma: float = 0.0,
+    config: Optional[Config] = None,
 ) -> torch.Tensor:
     """The real clip, resampled to the geometry the generation will have.
 
     Both arms must pass through identical preprocessing, otherwise the motion-mask
     comparison measures the resampling as much as the physics.
     """
-    spec = backend.spec
+    from .detection import frame_geometry
+
+    num_frames, height, width = (
+        frame_geometry(backend.spec, config) if config is not None
+        else (backend.spec.default_num_frames, backend.spec.default_height,
+              backend.spec.default_width)
+    )
     return load_video(
         sample.path,
-        num_frames=spec.default_num_frames,
-        height=spec.default_height,
-        width=spec.default_width,
+        num_frames=num_frames,
+        height=height,
+        width=width,
         blur_sigma=blur_sigma,
     )
 
@@ -110,7 +117,7 @@ def generate_candidate(
     from PIL import Image
 
     scenario = sample.meta["scenario"]
-    reference = reference_continuation(sample, backend, blur_sigma=0.0)
+    reference = reference_continuation(sample, backend, blur_sigma=0.0, config=config)
     first_frame = Image.fromarray(
         (reference[0].permute(1, 2, 0) * 255).byte().cpu().numpy()
     )

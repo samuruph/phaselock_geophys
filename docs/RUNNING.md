@@ -60,7 +60,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 333 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 336 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
@@ -109,6 +109,7 @@ output can be traced back to the exact settings.
 | | `categories` | Physics-IQ category filter (paired datasets use `scenarios` instead) |
 | | `window` | centred fraction of each clip to keep — mainly for IntPhys2 |
 | | `blur_sigma` | Gaussian blur applied to every arm |
+| | `height` / `width` | override the backend's frame size; `null` uses the spec. Setting a square source to its own size (LikePhys 512x512) drops Wan's 42% letterbox padding and ~40% of the per-clip cost with it |
 | `probe` | `sources` | `hidden_states`, `latent`, `x0_hat`, `velocity`, `attention` |
 | | `blocks` / `block_stride` | which DiT blocks to record |
 | | `pooling` | `mean` (matches GeoPhys) or `flatten` |

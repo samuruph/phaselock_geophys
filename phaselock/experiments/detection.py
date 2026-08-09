@@ -161,6 +161,20 @@ def statistics_from_record(
     return rows
 
 
+def frame_geometry(spec, config: Config) -> tuple[int, int, int]:
+    """``(num_frames, height, width)`` to load clips at.
+
+    The backend's native geometry unless the config overrides it. One helper rather than
+    four call sites reading `spec.default_*` directly, so a resolution override cannot
+    apply to the inversion but not to the visuals of the same run.
+    """
+    return (
+        spec.default_num_frames,
+        config.data.height or spec.default_height,
+        config.data.width or spec.default_width,
+    )
+
+
 def image_conditioning(
     backend: VideoBackend, frames: torch.Tensor, prompt: str
 ) -> Optional[dict[str, Any]]:
@@ -189,11 +203,12 @@ def extract_sample(
 ) -> list[StatisticRow]:
     """Invert one clip and reduce it to statistics rows."""
     spec = backend.spec
+    num_frames, height, width = frame_geometry(spec, config)
     frames = load_video(
         sample.path,
-        num_frames=spec.default_num_frames,
-        height=spec.default_height,
-        width=spec.default_width,
+        num_frames=num_frames,
+        height=height,
+        width=width,
         window=config.data.window,
         blur_sigma=config.data.blur_sigma,
     )
@@ -264,9 +279,9 @@ def save_visuals(
 
     spec = backend.spec
     written: list[Path] = []
+    num_frames, height, width = frame_geometry(spec, config)
     load = lambda sample: load_video(
-        sample.path, num_frames=spec.default_num_frames,
-        height=spec.default_height, width=spec.default_width,
+        sample.path, num_frames=num_frames, height=height, width=width,
         window=config.data.window, blur_sigma=config.data.blur_sigma,
     )
 
@@ -328,11 +343,12 @@ def reconstruction_check(
     from ..pipelines.inversion import resample
 
     spec = backend.spec
+    num_frames, height, width = frame_geometry(spec, config)
     frames = load_video(
         sample.path,
-        num_frames=spec.default_num_frames,
-        height=spec.default_height,
-        width=spec.default_width,
+        num_frames=num_frames,
+        height=height,
+        width=width,
         window=config.data.window,
     )
     conditioning = image_conditioning(backend, frames, config.inversion.prompt)

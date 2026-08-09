@@ -98,7 +98,7 @@ def main() -> None:
     for index, clip in enumerate(clips, start=1):
         from PIL import Image
 
-        reference = reference_continuation(clip, backend)
+        reference = reference_continuation(clip, backend, config=config)
         first_frame = Image.fromarray((reference[0].permute(1, 2, 0) * 255).byte().cpu().numpy())
         scenario = clip.meta["scenario"]
 
