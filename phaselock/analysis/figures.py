@@ -163,7 +163,7 @@ def source_comparison(
 
         glyphs = [
             Line2D([0], [0], color=palette.TEXT_MUTED, linewidth=1.0,
-                   label="whisker = spread across cells (1 s.d.), not uncertainty"),
+                   label="whisker = how much the probe cells disagree (1 s.d.)"),
             Line2D([0], [0], marker="D", linestyle="none", markerfacecolor="none",
                    markeredgecolor=palette.TEXT_SECONDARY,
                    label="diamond = single best cell"),
@@ -183,7 +183,9 @@ def source_comparison(
     external_cells = max((s.n_cells for s in summaries if s.source == "dinov2"), default=0)
     note = (
         f"Bar = mean over all {cells} probe cells (block x denoising step) for that source and "
-        "statistic; error bar = 1 s.d. across cells; open diamond = the single best cell."
+        "statistic. The whisker is NOT an error bar on that mean: it is how much those "
+        "cells disagree with each other, so short means the signal works at every depth "
+        "and step, long means it works only in places. Open diamond = the single best cell."
     )
     if external_cells:
         # The two pools differ by an order of magnitude, so the diamonds are not carrying

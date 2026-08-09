@@ -39,6 +39,10 @@ def parse_args() -> argparse.Namespace:
              "Default: the middle hidden-state block.",
     )
     parser.add_argument("--fps", type=int, default=12)
+    parser.add_argument(
+        "--static", action="store_true",
+        help="one fixed strip at a single block, instead of the animated depth summary",
+    )
     return parser.parse_args()
 
 
@@ -73,28 +77,45 @@ def main() -> None:
 
         # One strip per pair, reused across that pair's videos: the signals belong to the
         # clips, not to a particular rendering of them.
-        strip = None
+        depth_plausible = signal_overlay.across_depth(rows, pair.plausible.sample_id, source)
+        depth_violated = signal_overlay.across_depth(rows, pair.violated.sample_id, source)
+
+        cached = None
         for suffix in ("pair", "inversion", "roundtrip"):
             path = videos / f"{stem}_{suffix}.mp4"
             if not path.is_file():
                 continue
-            if strip is None:
-                import cv2
 
-                capture = cv2.VideoCapture(str(path))
-                width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-                capture.release()
-                strip = signal_overlay.signal_strip(
-                    plausible, violated, width, taus=taus,
-                    caption=(
-                        f"{source} block {block}. x = denoising timestep (0 = clean video, "
-                        f"1000 = noise), not video time -- statistics.csv stores each clip's "
-                        f"temporal summary, not its per-frame values. No spatial map: "
-                        f"activations are mean-pooled over space before any statistic exists."
-                    ),
+            import cv2
+
+            capture = cv2.VideoCapture(str(path))
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            capture.release()
+
+            out_path = videos / f"{stem}_{suffix}_signals.mp4"
+            if args.static:
+                caption = (
+                    f"{source} block {block}. x = denoising timestep (0 = clean video, "
+                    f"1000 = noise), not video time. No spatial map: activations are "
+                    f"mean-pooled over space before any statistic exists."
                 )
-            out = signal_overlay.attach(path, videos / f"{stem}_{suffix}_signals.mp4",
-                                        strip, fps=args.fps)
+                if cached is None or cached[0] != width:
+                    cached = (width, signal_overlay.signal_strip(
+                        plausible, violated, width, taus=taus, caption=caption))
+                out = signal_overlay.attach(path, out_path, cached[1], fps=args.fps)
+            else:
+                caption = (
+                    f"Line = mean over all {source} blocks, band = 1 s.d. across depth. "
+                    f"x = denoising timestep (0 = clean video, 1000 = noise), which does "
+                    f"not advance with video time -- the reveal is a reading aid, not a "
+                    f"correspondence. No spatial map: activations are mean-pooled over "
+                    f"space before any statistic exists."
+                )
+                strips = signal_overlay.animated_strips(
+                    depth_plausible or plausible, depth_violated or violated,
+                    width, frames=count, taus=taus, caption=caption)
+                out = signal_overlay.attach_animated(path, out_path, strips, fps=args.fps)
             print(f"  wrote {out.name}")
             written += 1
 

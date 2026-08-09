@@ -64,8 +64,17 @@ def inter_frame_phase_difference(frames: torch.Tensor) -> torch.Tensor:
     return torch.angle(spectrum[1:] * spectrum[:-1].conj())
 
 
-def phase_difference_correlation(generated: torch.Tensor, reference: torch.Tensor) -> float:
+def phase_difference_correlation(
+    generated: torch.Tensor, reference: torch.Tensor, cutoff: float = 0.4
+) -> float:
     """PhaseLock Fig. 3a: Pearson r between generated and reference phase-difference maps.
+
+    Restricted to the low-frequency band, as the paper's other spectral metrics are.
+    Correlating over the full spectrum returns ~0 for everything and is not a measurement:
+    at 480x720 only a quarter of the bins are in band, and phase at high spatial frequency
+    is near-uniform noise in both clips, so 75% of the terms are pure variance that swamps
+    whatever agreement exists in the frequencies carrying the motion. Measured on a real
+    sweep, the unmasked form gave 2e-4 where the paper reports 0.358.
 
     Both arguments are ``(F, C, H, W)`` in [0, 1] and must already be temporally aligned
     and, for the blur control, blurred by the same sigma.
@@ -75,7 +84,11 @@ def phase_difference_correlation(generated: torch.Tensor, reference: torch.Tenso
             f"shape mismatch: {tuple(generated.shape)} vs {tuple(reference.shape)}. "
             "Resample and letterbox both clips before comparing."
         )
-    return pearson(inter_frame_phase_difference(generated), inter_frame_phase_difference(reference))
+    a = inter_frame_phase_difference(generated)
+    b = inter_frame_phase_difference(reference)
+    # Spatial band only: the leading axis is frame pairs, not a frequency.
+    mask = low_frequency_mask(a.shape[1:], cutoff, a.device)
+    return pearson(a[:, mask], b[:, mask])
 
 
 def low_frequency_mask(
