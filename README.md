@@ -30,10 +30,17 @@ carry the signal at all.
 
 ## Documentation
 
-| | |
+Four documents, and they do not overlap. Pick by the question you have:
+
+| your question | document |
 |---|---|
-| **[docs/RUNNING.md](docs/RUNNING.md)** | **Start here to run anything.** Exact commands, what each stage reads and writes, CSV schemas, cost and storage, how to read the output, which sweeps matter. |
-| [docs/METHOD.md](docs/METHOD.md) | What is measured and why, and the four places the papers could not be followed literally. |
+| *"How do I run this?"* | **[docs/RUNNING.md](docs/RUNNING.md)** — **start here.** Exact commands per stage, what each reads and writes, CSV schemas, the output tree, measured cost and storage, which sweeps matter. Operational only: no derivations, no findings. |
+| *"What is being measured, and how exactly?"* | **[docs/METHOD.md](docs/METHOD.md)** — every signal defined and derived, step-by-step computation for each, where the papers were ambiguous and what was chosen instead. Self-contained; the deep links into the code are a convenience, not a dependency. No numbers from any run. |
+| *"What did we find?"* | **[docs/RESULTS.md](docs/RESULTS.md)** — the measured numbers, which model and dataset produced each, what they mean, and what should not yet be believed. Every claim is tagged with its backend. |
+| *"Does any of this actually work?"* | **[docs/VALIDATION.md](docs/VALIDATION.md)** — the GPU bring-up ladder and its recorded outcome, including the four real bugs only a GPU run could surface. A log, kept because the failures are the useful part. |
+
+The split is deliberate: **RUNNING** goes stale when commands change, **METHOD** only when
+the maths changes, **RESULTS** on every run, and **VALIDATION** never — it is history.
 
 ## Install
 

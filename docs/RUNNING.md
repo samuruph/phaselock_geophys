@@ -1,7 +1,10 @@
 # Running the analysis
 
 Operational guide: exact commands, what each stage does, what it reads and writes, and how
-to read the output. For *why* each quantity is measured, see [METHOD.md](METHOD.md).
+to read the output.
+
+> **Scope.** How to run things. For *what* is being measured and why, see
+> [METHOD.md](METHOD.md); for the numbers a run produced, [RESULTS.md](RESULTS.md).
 
 > **Status.** Measured on one L40S (46 GB). The timings below are real, not estimates.
 >

@@ -2,6 +2,11 @@
 
 What is measured, how, and where the source papers had to be interpreted.
 
+> **Scope.** Definitions and derivations only — self-contained, with no numbers from any
+> run. For measured results see [RESULTS.md](RESULTS.md); to run anything see
+> [RUNNING.md](RUNNING.md). Links into the code are a convenience, not a dependency:
+> everything here can be reimplemented from this document alone.
+
 ## 1. The question
 
 GeoPhys establishes that physical plausibility is readable from the geometry of a
@@ -282,44 +287,127 @@ hidden_states/b22/s4/phi_accel
 > a selection procedure, not a result. See §6 for the permutation null that separates the
 > two, and note it needs *different* floors for a mean and for a maximum.
 
-### Where each one is implemented
+## 4c. Exactly how each one is computed
 
-This document gives the definitions and the reasoning; the code is the specification.
-Every function below carries a docstring explaining *why* it is written the way it is,
-and every non-obvious choice is justified where it is made rather than here.
+Enough detail to reimplement without reading the code. Links go to the implementation,
+which carries the *why* at each call site.
 
-**The five statistics** — [`phaselock/metrics/geophys.py`](../phaselock/metrics/geophys.py)
+### Getting to a trajectory
 
-| quantity | function | note |
+Everything below operates on `Z ∈ R^{T×D}`, one vector per latent frame. Both paths
+reduce to that shape before any statistic is touched:
+
+- **internal** — the raw activation is `(1, T_tok·H_tok·W_tok, D)`. Both backends patchify
+  with `patch_size=(1,2,2)` and flatten row-major, so each latent frame owns a contiguous
+  equal-length run of tokens. Reshape to `(T, H_tok·W_tok, D)` and `mean(dim=1)`. Exact,
+  no interpolation.
+- **external** — DINOv2 gives one vector per *video* frame, `(F, D)`. Since the causal VAE
+  folds 4 video frames into each latent after the first, the frames belonging to each
+  latent are averaged, giving `(T, D)`. Without this the two paths differ in both
+  trajectory length and spacing, and every statistic depends on both.
+
+### The five statistics, step by step
+
+**Per-frame intermediates first.** With `v_t = z̄_{t+1} − z̄_t` for `t = 1 … T−1`:
+
+| | shape | computation |
 |---|---|---|
-| `v_t` | [`displacements`](../phaselock/metrics/geophys.py#L72) | |
-| `s_t` | [`speeds`](../phaselock/metrics/geophys.py#L82) | |
-| `θ_t` | [`turning_angles`](../phaselock/metrics/geophys.py#L87) | half-angle `atan2` form, **not** `arccos` — see §3 |
-| `a_t` | [`accelerations`](../phaselock/metrics/geophys.py#L107) | |
-| `ε_t` | [`prediction_residuals`](../phaselock/metrics/geophys.py#L125) | the three `fit` modes live here |
-| all five | [`geophys_statistics`](../phaselock/metrics/geophys.py#L250) | the temporal summaries |
+| `v_t` [`displacements`](../phaselock/metrics/geophys.py#L72) | `(T−1, D)` | `Z[1:] − Z[:−1]` |
+| `s_t` [`speeds`](../phaselock/metrics/geophys.py#L82) | `(T−1,)` | `‖v_t‖₂` |
+| `a_t` [`accelerations`](../phaselock/metrics/geophys.py#L107) | `(T−2, D)` | `v[1:] − v[:−1]`, i.e. the second difference of `Z` |
+| `θ_t` [`turning_angles`](../phaselock/metrics/geophys.py#L87) | `(T−2,)` | see below |
+| `ε_t` [`prediction_residuals`](../phaselock/metrics/geophys.py#L125) | `(T−order,)` | see below |
 
-**The three new metrics** — [`phaselock/metrics/flow_geometry.py`](../phaselock/metrics/flow_geometry.py)
+**`θ_t`, the turning angle.** Normalise both displacements, then take the half-angle form:
 
-| quantity | function | note |
-|---|---|---|
-| `ġ_σ` exact | [`geometric_drift`](../phaselock/metrics/flow_geometry.py#L61) | `autograd.grad` through the statistic only, never the transformer |
-| `ġ_σ` empirical | [`geometric_drift_empirical`](../phaselock/metrics/flow_geometry.py#L105) | secant across recorded steps |
-| `ρ_f` | [`transport_alignment`](../phaselock/metrics/flow_geometry.py#L127) | returns plain and displacement-weighted means |
-| erosion rate | [`erosion_rate`](../phaselock/metrics/flow_geometry.py#L154) | |
+```
+â = v_t / ‖v_t‖     b̂ = v_{t+1} / ‖v_{t+1}‖
+θ_t = 2 · atan2( ‖â − b̂‖ , ‖â + b̂‖ )
+```
 
-**Scoring** — [`phaselock/metrics/scoring.py`](../phaselock/metrics/scoring.py):
-[`signed_deltas`](../phaselock/metrics/scoring.py#L41),
-[`scale_normalize`](../phaselock/metrics/scoring.py#L71),
-[`pairwise_accuracy`](../phaselock/metrics/scoring.py#L96),
-[`bootstrap_ci`](../phaselock/metrics/scoring.py#L133),
-[`majority_ensemble`](../phaselock/metrics/scoring.py#L300),
-[`or_ensemble`](../phaselock/metrics/scoring.py#L311), and the permutation test
-[`selection_null`](../phaselock/metrics/scoring.py#L246).
+Algebraically identical to `arccos(⟨â, b̂⟩)`, numerically far better. `arccos` loses about
+half its precision near 0 and π — exactly where a near-straight trajectory sits — and its
+derivative diverges there, which matters because §4's drift differentiates this. Norms use
+an epsilon floor so a stationary segment gives 0 rather than NaN.
 
-**Assembly** — [`statistics_from_record`](../phaselock/experiments/detection.py#L74) is
-where a probe record becomes the rows of `statistics.csv`, and where the exact/empirical
-decision is actually taken per source.
+**`ε_t`, the prediction residual** (default `fit="span"`). For each sliding window of
+`order = 3` consecutive frames predicting the next one:
+
+1. **anchor** on the most recent frame of the window, `p = z̄_t`
+2. **basis** = the earlier frames as offsets from it, `B = [z̄_{t−2} − p, z̄_{t−1} − p]`,
+   shaped `(D, order−1)`. Anchoring makes the span *affine*, so a constant-velocity
+   trajectory is predicted exactly and scores zero.
+3. **target offset** `o = z̄_{t+1} − p`
+4. **project** `o` onto `span(B)` by least squares: `c = pinv(B) · o`, giving `ẑ = B·c`
+5. **residual** `ε_t = ‖o − ẑ‖₂` — the component orthogonal to the span
+
+`pinv` rather than `lstsq`: it is differentiable and tolerant of rank-deficient windows,
+which a stationary segment produces. `ridge` and `scalar` are the alternative fits; see §3
+for why the paper's literal global fit is degenerate.
+
+**The five summaries.** `φ_speed = std({s_t})`, `φ_curv = mean({θ_t})`,
+`φ_ang = std({θ_t})`, `φ_accel = mean({‖a_t‖²})`, `φ_perr = mean({‖ε_t‖})` —
+[`geophys_statistics`](../phaselock/metrics/geophys.py#L250). Standard deviations are
+**population**, not sample. Note again `accel` is squared and `perr` is not; that
+asymmetry is the paper's.
+
+### The three coupled metrics, step by step
+
+All take the pooled trajectory `Z` and the pooled flow `U = pool(u_θ)` at the same point,
+the same shape. Pooling is linear, so the pooled drift *is* the drift of the pooled
+trajectory — that is the whole reason this works.
+
+**Geometric drift, exact** — [`geometric_drift`](../phaselock/metrics/flow_geometry.py#L61)
+
+1. detach `Z`, clone it, set `requires_grad_(True)`
+2. compute all five statistics on it, building an autograd graph over a `(T, D)` tensor
+3. for each statistic: `g = autograd.grad(φ_σ, Z, retain_graph=True)`
+4. `ġ_σ = Σ (g ⊙ U)` — the directional derivative of the statistic along the flow
+
+The graph covers the statistic only, never the transformer, so this is a few thousand
+flops on top of a sampler step already computed. Sign convention: **negative means this
+step is making the trajectory more regular**.
+
+**Geometric drift, empirical** — [`geometric_drift_empirical`](../phaselock/metrics/flow_geometry.py#L105)
+
+`ġ_σ ≈ [φ_σ(Z_{k+1}) − φ_σ(Z_k)] / (τ_{k+1} − τ_k)` across consecutive *recorded* steps.
+Same quantity, but a secant whose resolution is the recording stride rather than a tangent.
+This is what every non-ODE-state source uses.
+
+**Transport alignment** — [`transport_alignment`](../phaselock/metrics/flow_geometry.py#L127)
+
+Per frame, the cosine between the motion and how the flow is changing that motion:
+`ρ_f = cos((ΔZ)_f, (ΔU)_f)`. Returned twice — a plain mean, and a mean weighted by
+`‖(ΔZ)_f‖` so that near-static frames, where the cosine is dominated by noise, do not
+count equally with moving ones.
+
+**Erosion rate** — [`erosion_rate`](../phaselock/metrics/flow_geometry.py#L154)
+
+`mean(‖(ΔU)_f‖ / (‖(ΔZ)_f‖ + ε))` — how fast motion is being restructured relative to how
+much motion exists. Unlike alignment it is unsigned and unbounded.
+
+### From a number to an accuracy
+
+[`statistics_from_record`](../phaselock/experiments/detection.py#L74) turns a probe record
+into the rows of `statistics.csv`, and is where the exact-versus-empirical choice is made
+per source. Then, per signal, over matched pairs:
+
+1. `δ_b = u_b(V⁻) − u_b(V⁺)` — [`signed_deltas`](../phaselock/metrics/scoring.py#L41).
+   Positive when the signal ordered the pair correctly.
+2. `z_b = δ_b / scale` — [`scale_normalize`](../phaselock/metrics/scoring.py#L71).
+   **Scale only, never mean-centred**: subtracting the mean would flip the sign of every
+   below-average pair, and the sign is the prediction. See §5.
+3. accuracy = fraction of positive `δ`, ties 0.5 —
+   [`pairwise_accuracy`](../phaselock/metrics/scoring.py#L96)
+4. interval = 1000-resample bootstrap **grouped by scenario** —
+   [`bootstrap_ci`](../phaselock/metrics/scoring.py#L133)
+5. ensembles over the five: [`majority_ensemble`](../phaselock/metrics/scoring.py#L300)
+   (`Σ z_b`) and [`or_ensemble`](../phaselock/metrics/scoring.py#L311) (`argmax |z_b|`)
+6. and, once for the whole run,
+   [`selection_null`](../phaselock/metrics/scoring.py#L246) — shuffle which member of each
+   pair is labelled violated, rescore every signal, repeat 300×. Yields two floors, one
+   for a mean and a higher one for a maximum, because a maximum selects for noise while a
+   mean cancels it.
 
 ### How to check the implementations are right
 

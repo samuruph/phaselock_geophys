@@ -1,5 +1,9 @@
 # GPU bring-up and validation plan
 
+> **Scope.** A historical log of getting the pipeline working on real hardware, kept
+> because the failures are the useful part. Not a guide — see [RUNNING.md](RUNNING.md)
+> — and not results, see [RESULTS.md](RESULTS.md).
+
 > **Outcome (executed).** The ladder was run. Every rung passed, after four real bugs that
 > only a GPU run could surface. Recorded here rather than rewritten away, because the
 > failures are the useful part.
