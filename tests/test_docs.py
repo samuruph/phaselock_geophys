@@ -119,3 +119,26 @@ def test_signal_inventory_arithmetic_is_right():
     )
     assert total == 3820
     assert "**3820**" in (ROOT / "docs/METHOD.md").read_text()
+
+
+def test_code_anchors_in_the_docs_point_at_what_they_claim():
+    """`[`name`](../path#L42)` must actually land on `def name`.
+
+    Line-number anchors rot the instant a function moves, and a link that silently points
+    at the wrong function is worse than no link -- a reader following it draws conclusions
+    about the wrong code.
+    """
+    import re
+
+    wrong = []
+    for doc in ROOT.glob("docs/*.md"):
+        text = doc.read_text()
+        for label, relative, line in re.findall(r"\[`(\w+)`\]\(\.\./([\w/.]+)#L(\d+)\)", text):
+            source = ROOT / relative
+            assert source.is_file(), f"{doc.name} links to missing {relative}"
+            lines = source.read_text().splitlines()
+            index = int(line) - 1
+            found = lines[index] if 0 <= index < len(lines) else "<past end of file>"
+            if f"def {label}" not in found:
+                wrong.append(f"{doc.name}: {relative}#L{line} claims {label}, found {found.strip()[:50]!r}")
+    assert not wrong, "stale anchors:\n" + "\n".join(wrong)

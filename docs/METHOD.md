@@ -282,6 +282,66 @@ hidden_states/b22/s4/phi_accel
 > a selection procedure, not a result. See §6 for the permutation null that separates the
 > two, and note it needs *different* floors for a mean and for a maximum.
 
+### Where each one is implemented
+
+This document gives the definitions and the reasoning; the code is the specification.
+Every function below carries a docstring explaining *why* it is written the way it is,
+and every non-obvious choice is justified where it is made rather than here.
+
+**The five statistics** — [`phaselock/metrics/geophys.py`](../phaselock/metrics/geophys.py)
+
+| quantity | function | note |
+|---|---|---|
+| `v_t` | [`displacements`](../phaselock/metrics/geophys.py#L72) | |
+| `s_t` | [`speeds`](../phaselock/metrics/geophys.py#L82) | |
+| `θ_t` | [`turning_angles`](../phaselock/metrics/geophys.py#L87) | half-angle `atan2` form, **not** `arccos` — see §3 |
+| `a_t` | [`accelerations`](../phaselock/metrics/geophys.py#L107) | |
+| `ε_t` | [`prediction_residuals`](../phaselock/metrics/geophys.py#L125) | the three `fit` modes live here |
+| all five | [`geophys_statistics`](../phaselock/metrics/geophys.py#L250) | the temporal summaries |
+
+**The three new metrics** — [`phaselock/metrics/flow_geometry.py`](../phaselock/metrics/flow_geometry.py)
+
+| quantity | function | note |
+|---|---|---|
+| `ġ_σ` exact | [`geometric_drift`](../phaselock/metrics/flow_geometry.py#L61) | `autograd.grad` through the statistic only, never the transformer |
+| `ġ_σ` empirical | [`geometric_drift_empirical`](../phaselock/metrics/flow_geometry.py#L105) | secant across recorded steps |
+| `ρ_f` | [`transport_alignment`](../phaselock/metrics/flow_geometry.py#L127) | returns plain and displacement-weighted means |
+| erosion rate | [`erosion_rate`](../phaselock/metrics/flow_geometry.py#L154) | |
+
+**Scoring** — [`phaselock/metrics/scoring.py`](../phaselock/metrics/scoring.py):
+[`signed_deltas`](../phaselock/metrics/scoring.py#L41),
+[`scale_normalize`](../phaselock/metrics/scoring.py#L71),
+[`pairwise_accuracy`](../phaselock/metrics/scoring.py#L96),
+[`bootstrap_ci`](../phaselock/metrics/scoring.py#L133),
+[`majority_ensemble`](../phaselock/metrics/scoring.py#L300),
+[`or_ensemble`](../phaselock/metrics/scoring.py#L311), and the permutation test
+[`selection_null`](../phaselock/metrics/scoring.py#L246).
+
+**Assembly** — [`statistics_from_record`](../phaselock/experiments/detection.py#L74) is
+where a probe record becomes the rows of `statistics.csv`, and where the exact/empirical
+decision is actually taken per source.
+
+### How to check the implementations are right
+
+The tests are executable specifications, and are more precise than prose. They run on CPU
+in seconds with no weights:
+
+```bash
+python -m pytest tests/test_geophys.py tests/test_flow_geometry.py -v
+```
+
+The statistics are pinned against analytic ground truth rather than golden values — a
+straight line gives zero for all five, a discretised circle gives constant curvature with
+zero speed variation, an injected teleport spikes acceleration and residual at exactly the
+frame it was injected at. Two tests exist specifically to document traps: that the naive
+global OLS residual is degenerate, and that the turning angle stays stable at both
+endpoints of its range where `arccos` does not.
+
+The new metrics are checked against the identity they are derived from: frame differencing
+commutes with a linear flow, `geometric_drift` matches a central finite difference of the
+statistic, the empirical estimator converges to the exact one as the step shrinks, and a
+flow that provably straightens a trajectory must give `ġ_curv < 0`.
+
 ## 5. Scoring
 
 GeoPhys's rule, verbatim. For a matched pair `(V⁺, V⁻)` with `V⁻` violated:
