@@ -73,9 +73,25 @@ def main() -> None:
         write_figures(rows, args.run_dir, args.kind)
 
 
+def external_dir(run_dir: Path) -> tuple[Path, str]:
+    """The external baseline to use, preferring the temporally matched one.
+
+    A pooled run is the only one directly comparable to the internal path -- unpooled
+    DINOv2 is per video frame, four times finer in time than the latents -- so it wins
+    when both are present. One lookup, shared by the table and the figures: they read
+    different directories for a while, and the table reported the gate as "not run" while
+    the figures were drawing it.
+    """
+    pooled = run_dir / "external_latent"
+    if (pooled / "external_signals.csv").is_file():
+        return pooled, "latent"
+    return run_dir / "external", "none"
+
+
 def correctness_gate(run_dir: Path) -> None:
     """The DINOv2 baseline decides whether anything else is interpretable."""
-    external = load(run_dir / "external" / "external_signals.csv")
+    directory, pooling = external_dir(run_dir)
+    external = load(directory / "external_signals.csv")
     print("=" * 78)
     if not external:
         print("CORRECTNESS GATE: not run.")
@@ -93,9 +109,12 @@ def correctness_gate(run_dir: Path) -> None:
         if low - 0.08 <= accuracy <= high + 0.08
         else "OUTSIDE the published range -- internal results are unvalidated"
     )
+    matched = "temporally matched to the latent grid" if pooling == "latent" else (
+        "per-frame, NOT temporally matched to the internal path")
     print(f"CORRECTNESS GATE (DINOv2, layer {best['layer']}, '{best['statistic']}'): "
           f"{100 * accuracy:.1f}%")
     print(f"  published 77.6-80.8% single-backbone -> {verdict}")
+    print(f"  baseline is {matched}")
     print("=" * 78 + "\n")
 
 
@@ -209,12 +228,10 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
 
     # A pooled external run, if present, is the one that is actually comparable to the
     # internal path; fall back to the unpooled one and say so in the figures.
-    external_dir, external_pooling = run_dir / "external_latent", "latent"
-    if not (external_dir / "external_signals.csv").is_file():
-        external_dir, external_pooling = run_dir / "external", "none"
+    ext_dir, external_pooling = external_dir(run_dir)
 
     external_summaries = None
-    external_rows = load(external_dir / "external_signals.csv")
+    external_rows = load(ext_dir / "external_signals.csv")
     if external_rows:
         from phaselock.experiments.detection import SourceSummary
 
@@ -237,7 +254,7 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
     # one step) so DINOv2 gets the same per-source figures as everything else.
     external_statistics = [
         dict(row, source="dinov2", block=row.get("encoder_layer", 0), step=0)
-        for row in load(external_dir / "external_statistics.csv")
+        for row in load(ext_dir / "external_statistics.csv")
     ]
     external_signal_rows = [
         {"source": "dinov2", "block": row["layer"], "step": 0, "statistic": row["statistic"],
