@@ -338,6 +338,9 @@ def reconstruction_check(
             result.noise,
             num_steps=config.inversion.num_steps,
             prompt=config.inversion.prompt,
+            # Same conditioning coming back as going out, or an I2V backend rebuilds it
+            # without the image channels and the transformer gets 16 where it wants 32.
+            conditioning=conditioning,
         )
     )
     return {

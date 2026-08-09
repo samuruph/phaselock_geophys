@@ -322,3 +322,58 @@ def test_ensembles_decline_a_location_with_too_few_pairs():
         make_row(pairs[0].violated.sample_id, 1, "ball_drop", 5.0).flatten(),
     ]
     assert ensemble_over_statistics(rows, pairs, LATENT, NO_BLOCK, 0) == {}
+
+
+def test_reconstruction_check_conditions_both_directions(latent_spec, target_latent, monkeypatch):
+    """The round trip must carry I2V conditioning out *and* back.
+
+    Regression: `invert` got the conditioning and `resample` rebuilt its own without the
+    image channels, so an I2V transformer expecting 32 input channels received 16 and the
+    whole CogVideoX track died on its first clip. A T2V backend has no such input, which
+    is why this survived a complete run on Wan.
+    """
+    import torch
+
+    from phaselock import experiments
+    from phaselock.config import Config, InversionConfig
+    from phaselock.datasets import VideoSample
+    from phaselock.experiments.detection import reconstruction_check
+    from tests.conftest import OracleBackend
+
+    class I2VBackend(OracleBackend):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.mode = "i2v"
+            self.unconditioned = 0
+
+        def encode_image_condition(self, frames):
+            return torch.zeros_like(self.target)
+
+        def prepare_conditioning(self, prompt="", negative_prompt=None, **kwargs):
+            base = super().prepare_conditioning(prompt, negative_prompt, **kwargs)
+            base["image_latents"] = kwargs.get("image_latents")
+            return base
+
+        def transformer_forward(self, latents, timestep, conditioning):
+            if conditioning.get("image_latents") is None:
+                self.unconditioned += 1
+            return super().transformer_forward(latents, timestep, conditioning)
+
+        def encode(self, frames):
+            return self.target
+
+        def decode(self, latents):
+            return torch.zeros(latent_spec.default_num_frames, 3, 16, 16)
+
+    backend = I2VBackend(latent_spec, target_latent)
+    monkeypatch.setattr(
+        experiments.detection, "load_video",
+        lambda *a, **k: torch.zeros(latent_spec.default_num_frames, 3, 16, 16),
+    )
+    config = Config(inversion=InversionConfig(num_steps=3))
+    sample = VideoSample(sample_id="s", path="unused.mp4", label=0, group="g", dataset="likephys")
+
+    reconstruction_check(backend, sample, config)
+    assert backend.unconditioned == 0, (
+        f"{backend.unconditioned} forward passes ran without the image channels"
+    )

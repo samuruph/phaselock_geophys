@@ -136,16 +136,18 @@ def invert(
     with ProbeRecorder(
         backend, sources=sources, grid=grid, blocks=blocks, block_stride=block_stride, pooling=pooling
     ) as probe:
-        probe.set_provenance(
-            direction="inversion",
-            num_steps=num_steps,
-            record_steps=sorted(to_record),
-            prompt=prompt,
-            num_frames=int(num_frames),
-            height=int(height),
-            width=int(width),
+        # Merged, not splatted: a caller passing a key this function also sets would
+        # otherwise raise TypeError. See the matching note in pipelines/generation.py.
+        probe.set_provenance(**{
+            "direction": "inversion",
+            "num_steps": num_steps,
+            "record_steps": sorted(to_record),
+            "prompt": prompt,
+            "num_frames": int(num_frames),
+            "height": int(height),
+            "width": int(width),
             **(provenance or {}),
-        )
+        })
 
         # z starts clean, so the level it currently sits at leads the schedule by one.
         # Evaluating at level s and renoising back to s is the *identity* -- (x0, eps)

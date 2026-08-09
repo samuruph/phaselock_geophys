@@ -93,18 +93,21 @@ def generate_with_probes(
     with ProbeRecorder(
         backend, sources=sources, grid=grid, blocks=blocks, block_stride=block_stride, pooling=pooling
     ) as probe:
-        probe.set_provenance(
-            direction="generation",
-            num_steps=num_steps,
-            record_steps=sorted(to_record),
-            prompt=prompt,
-            guidance_scale=guidance_scale,
-            seed=seed,
-            num_frames=int(num_frames),
-            height=int(height),
-            width=int(width),
+        # Merged rather than splatted: `**(provenance or {})` raises TypeError the moment a
+        # caller passes a key this function also sets, and `num_steps` is exactly the kind
+        # of thing a caller reasonably records. Let the caller's value win instead.
+        probe.set_provenance(**{
+            "direction": "generation",
+            "num_steps": num_steps,
+            "record_steps": sorted(to_record),
+            "prompt": prompt,
+            "guidance_scale": guidance_scale,
+            "seed": seed,
+            "num_frames": int(num_frames),
+            "height": int(height),
+            "width": int(width),
             **(provenance or {}),
-        )
+        })
 
         def transformer_hook(_module, args, kwargs, output):
             if not probe.armed:

@@ -351,3 +351,24 @@ def test_inversion_evaluates_the_clean_end_first(constant_backend):
     )
     assert constant_backend.levels_seen[0] == pytest.approx(0.0)
     assert constant_backend.levels_seen == sorted(constant_backend.levels_seen)
+
+
+def test_provenance_accepts_a_key_the_pipeline_also_sets(oracle):
+    """A caller recording `num_steps` must not blow up the run.
+
+    Regression: provenance was splatted alongside the pipeline's own keyword arguments,
+    so `provenance={"num_steps": k}` -- which the step sweep passes, reasonably, since it
+    varies k per call -- raised TypeError for multiple values. The caller's value wins.
+    """
+    from phaselock.pipelines.inversion import invert
+
+    result = invert(
+        oracle,
+        latents=oracle.target,
+        num_steps=4,
+        record_steps=2,
+        sources=[LATENT],
+        provenance={"num_steps": 999, "sample_id": "x"},
+    )
+    assert result.record.provenance["num_steps"] == 999
+    assert result.record.provenance["sample_id"] == "x"
