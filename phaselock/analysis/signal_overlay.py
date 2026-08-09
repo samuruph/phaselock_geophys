@@ -109,14 +109,59 @@ def per_video_frame(
         if not stack:
             continue
         mean = np.mean(np.stack(stack), axis=0)
-        # Right-align: an intermediate at index i describes latent frame i + offset.
-        offset = latents - len(mean)
-        expanded = np.full(spec.default_num_frames, np.nan, dtype=np.float64)
-        for index, value in enumerate(mean):
-            for frame in frames_for_latent(index + offset, spec):
-                if frame < expanded.size:
-                    expanded[frame] = value
-        out[name] = expanded
+        expanded = _spread_over_span(mean, name, latents, spec, order)
+        if expanded is not None:
+            out[name] = expanded
+    return out
+
+
+def _latent_span(index: int, name: str, order: int) -> range:
+    """Which latent frames an intermediate at ``index`` actually describes.
+
+    Getting this wrong puts the curve in the wrong place, which matters most for exactly
+    the question the timeline exists to answer -- whether the signal fires when the
+    violation happens.
+
+    Right-aligning them all, which is the obvious thing to do since differencing shortens
+    the series, is wrong: it lags curvature and acceleration by a whole latent frame, four
+    video frames, because both are second differences centred on the middle of the three
+    latents they touch, not the last.
+
+    * ``speed``   ``v_i = z_{i+1} - z_i``            spans latents ``i .. i+1``
+    * ``curv``    angle between ``v_i`` and ``v_{i+1}``  spans ``i .. i+2``
+    * ``accel``   ``v_{i+1} - v_i``                   spans ``i .. i+2``
+    * ``perr``    predicts ``z_{i+order}`` from the ``order`` before it, so it is *about*
+      that one frame
+    """
+    if name == "speed":
+        return range(index, index + 2)
+    if name in ("curv", "accel"):
+        return range(index, index + 3)
+    return range(index + order, index + order + 1)
+
+
+def _spread_over_span(values, name, latents, spec, order):
+    """Expand per-intermediate values onto video frames, averaging where spans overlap.
+
+    Overlap is real -- consecutive accelerations share two of their three latents -- so
+    averaging is the honest reduction rather than letting the last writer win.
+    """
+    from .latent_motion import frames_for_latent
+
+    total = np.zeros(spec.default_num_frames, dtype=np.float64)
+    count = np.zeros(spec.default_num_frames, dtype=np.float64)
+    for index, value in enumerate(values):
+        for latent in _latent_span(index, name, order):
+            if latent >= latents:
+                continue
+            for frame in frames_for_latent(latent, spec):
+                if frame < total.size:
+                    total[frame] += float(value)
+                    count[frame] += 1.0
+    if not count.any():
+        return None
+    out = np.full(spec.default_num_frames, np.nan, dtype=np.float64)
+    np.divide(total, count, out=out, where=count > 0)
     return out
 
 

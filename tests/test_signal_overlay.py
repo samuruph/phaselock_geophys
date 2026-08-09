@@ -200,3 +200,44 @@ def test_per_video_frame_holds_each_latent_across_its_video_frames():
     assert speed.size == spec.default_num_frames == 81
     # Distinct values cannot exceed the latent count, since each is held across its frames.
     assert len(set(speed[~np.isnan(speed)].tolist())) <= 21
+
+
+def test_intermediates_are_placed_on_the_latents_they_describe():
+    """Right-aligning every series lags the second differences by a whole latent.
+
+    Curvature and acceleration are centred on the middle of the three latents they
+    touch, not the last, so right-aligning them puts the curve four video frames after
+    the motion that caused it -- exactly wrong for a figure whose job is to show *when*
+    the signal fires.
+    """
+    span = signal_overlay._latent_span
+    assert list(span(0, "speed", 3)) == [0, 1]
+    assert list(span(0, "curv", 3)) == [0, 1, 2]
+    assert list(span(0, "accel", 3)) == [0, 1, 2]
+    # The residual predicts one specific frame from the `order` before it.
+    assert list(span(0, "perr", 3)) == [3]
+    assert list(span(5, "perr", 2)) == [7]
+
+
+def test_spread_averages_where_spans_overlap():
+    """Consecutive accelerations share two of their three latents."""
+    from phaselock.backends import get_spec
+
+    spec = get_spec("wan21_t2v_1_3b")
+    values = np.array([0.0, 3.0])  # spans 0..2 and 1..3
+    out = signal_overlay._spread_over_span(values, "accel", 21, spec, order=3)
+    # Latent 0 sees only the first value; latent 1 sees both and must average them.
+    assert out[0] == pytest.approx(0.0)
+    from phaselock.analysis.latent_motion import frames_for_latent
+
+    shared = list(frames_for_latent(1, spec))[0]
+    assert out[shared] == pytest.approx(1.5)
+
+
+def test_spread_leaves_uncovered_frames_as_nan():
+    from phaselock.backends import get_spec
+
+    spec = get_spec("wan21_t2v_1_3b")
+    out = signal_overlay._spread_over_span(np.array([1.0]), "speed", 21, spec, order=3)
+    assert not np.isnan(out[0]), "latent 0 is covered"
+    assert np.isnan(out[-1]), "the tail has no value and must not be invented"

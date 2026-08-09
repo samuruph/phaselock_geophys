@@ -119,8 +119,11 @@ def main() -> None:
                     print(f"  wrote {figure.name}")
                     written += 1
 
+        # Only the pair video gets a signal strip. The others show one clip -- the
+        # inversion trajectory, the round trip -- so a plausible-vs-violated comparison
+        # underneath them is a different subject bolted onto the wrong picture.
         cached = None
-        for suffix in ("pair", "inversion", "roundtrip"):
+        for suffix in ("pair",):
             path = videos / f"{stem}_{suffix}.mp4"
             if not path.is_file():
                 continue
@@ -143,7 +146,7 @@ def main() -> None:
                     cached = (width, signal_overlay.signal_strip(
                         plausible, violated, width, taus=taus, caption=caption))
                 out = signal_overlay.attach(path, out_path, cached[1], fps=args.fps)
-            elif timeline is not None:
+            elif timeline is not None and suffix == "pair":
                 strips = signal_overlay.timeline_strips(
                     timeline[0], timeline[1], width,
                     caption=(
