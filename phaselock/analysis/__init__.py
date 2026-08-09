@@ -15,6 +15,8 @@ from .figures import (
     source_comparison,
     statistic_comparison,
     step_sweep,
+    step_sweep_panels,
+    generation_quality,
 )
 
 __all__ = [
@@ -29,4 +31,6 @@ __all__ = [
     "source_comparison",
     "statistic_comparison",
     "step_sweep",
+    "step_sweep_panels",
+    "generation_quality",
 ]

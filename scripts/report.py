@@ -52,10 +52,24 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    rows = load(args.run_dir / "signals.csv")
-    if not rows:
-        raise SystemExit(f"no signals.csv under {args.run_dir}; run scripts/run_inversion.py first")
 
+    # Dispatch on what the run actually produced, so one command serves every stage.
+    # Requiring signals.csv meant the generation and step-sweep runs wrote their CSVs and
+    # then silently had no figures, which is how they sat unreported for a day.
+    if not (args.run_dir / "signals.csv").is_file():
+        for filename, handler in (
+            ("sweep.csv", step_sweep_report),
+            ("candidates.csv", generation_report),
+        ):
+            if (args.run_dir / filename).is_file():
+                handler(args.run_dir, args.figures)
+                return
+        raise SystemExit(
+            f"nothing to report under {args.run_dir}: expected signals.csv (inversion), "
+            "sweep.csv (step sweep) or candidates.csv (generation)"
+        )
+
+    rows = load(args.run_dir / "signals.csv")
     for row in rows:
         row["accuracy"] = float(row["accuracy"])
         row["ci_low"] = float(row["ci_low"])
@@ -71,6 +85,66 @@ def main() -> None:
     heatmaps(rows, args.statistic, args.source, args.kind)
     if args.figures:
         write_figures(rows, args.run_dir, args.kind)
+
+
+def step_sweep_report(run_dir: Path, figures: bool) -> None:
+    """Stage 7. The blur control is the whole point, so it leads the table."""
+    cells = load(run_dir / "sweep.csv")
+    print(f"\n{len(cells)} cells from {len({c['sample_id'] for c in cells})} clips\n")
+
+    from phaselock.analysis.figures import SWEEP_METRICS
+
+    steps = sorted({int(c["num_steps"]) for c in cells})
+    sigmas = sorted({float(c["blur_sigma"]) for c in cells})
+    for column, label, higher in SWEEP_METRICS:
+        values = [c for c in cells if c.get(column) not in (None, "")]
+        if not values:
+            continue
+        print(f"{label}   ({'higher' if higher else 'lower'} is better)")
+        print("       " + "".join(f"{'K=' + str(k):>12}" for k in steps))
+        for sigma in sigmas:
+            row = []
+            for k in steps:
+                got = [float(c[column]) for c in values
+                       if int(c["num_steps"]) == k and float(c["blur_sigma"]) == sigma]
+                row.append(sum(got) / len(got) if got else float("nan"))
+            print(f"  s={sigma:<4g}" + "".join(f"{v:12.4f}" for v in row))
+        print()
+
+    if figures:
+        from phaselock.analysis import step_sweep, step_sweep_panels
+
+        directory = run_dir / "figures"
+        directory.mkdir(parents=True, exist_ok=True)
+        for produced in (
+            step_sweep_panels(cells, directory / "01_step_sweep_panels.png"),
+            step_sweep(cells, directory / "02_step_sweep_curvature.png", metric="phi_curv"),
+        ):
+            if produced:
+                print(f"  {produced.name}")
+
+
+def generation_report(run_dir: Path, figures: bool) -> None:
+    """Stage 6. Fidelity of the generated continuation to the real one."""
+    import statistics as stats
+
+    cells = load(run_dir / "candidates.csv")
+    print(f"\n{len(cells)} generations from {len({c['sample_id'] for c in cells})} clips\n")
+    for column in ("spatial_iou", "spatiotemporal_iou", "weighted_spatial_iou", "mse", "raw_score"):
+        values = [float(c[column]) for c in cells if c.get(column) not in (None, "")]
+        if values:
+            spread = stats.stdev(values) if len(values) > 1 else 0.0
+            print(f"  {column:<24}{stats.mean(values):8.4f} +/- {spread:.4f}"
+                  f"   [{min(values):.4f}, {max(values):.4f}]")
+
+    if figures:
+        from phaselock.analysis import generation_quality
+
+        directory = run_dir / "figures"
+        directory.mkdir(parents=True, exist_ok=True)
+        produced = generation_quality(cells, directory / "01_generation_quality.png")
+        if produced:
+            print(f"\n  {produced.name}")
 
 
 def external_dir(run_dir: Path) -> tuple[Path, str]:

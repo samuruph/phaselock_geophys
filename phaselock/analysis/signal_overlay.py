@@ -41,6 +41,82 @@ STRIP_HEIGHT = 2.05
 """Inches. Tall enough for five readable panels, short enough not to dwarf the video."""
 
 
+PER_FRAME = ("speed", "curv", "accel", "perr")
+"""The four intermediates that exist per frame. `ang` has no per-frame form -- it is a
+standard deviation over the whole clip, so there is nothing to plot against time."""
+
+
+def per_video_frame(
+    record,
+    spec,
+    source: str = "hidden_states",
+    step: Optional[int] = None,
+    order: int = 3,
+    fit: str = "span",
+) -> dict[str, np.ndarray]:
+    """Per-*video-frame* intermediates, averaged over depth, from a saved trajectory.
+
+    This is the only way to put video time on the x-axis. `statistics.csv` stores each
+    clip's temporal summary -- a mean or standard deviation over its frames -- and a mean
+    cannot be inverted back into the values it came from. The full `(T, D)` trajectories
+    can, which is what `probe.save_trajectories` is for.
+
+    Two expansions happen here:
+
+    * **depth** -- every recorded block gives its own intermediate series, averaged into
+      one, the same summary the animated strip uses.
+    * **time** -- the intermediates are per *latent* frame, and the causal VAE folds four
+      video frames into each latent after the first, so each value is held across the
+      video frames it was computed from. The result is a step function at latent
+      resolution, which is the honest rendering: it is 21 measurements stretched over 81
+      frames, not 81 measurements.
+
+    Differencing also shortens the series -- speed loses one frame, curvature and
+    acceleration two, the residual `order` -- so each is right-aligned to the frames it
+    actually describes and left-padded with NaN.
+    """
+    from ..backends.base import num_latent_frames
+    from ..metrics.geophys import geophys_signals
+    from .latent_motion import frames_for_latent
+
+    blocks = [k.block for k in record.trajectories if k.source == source
+              and (step is None or k.step == step)]
+    if not blocks:
+        return {}
+    chosen_step = step if step is not None else sorted(record.steps)[0]
+
+    collected: dict[str, list[np.ndarray]] = {name: [] for name in PER_FRAME}
+    for block in sorted(set(blocks)):
+        try:
+            trajectory = record.get(source, chosen_step, block)
+        except KeyError:
+            continue
+        signals = geophys_signals(trajectory, order=order, fit=fit)
+        for name, series in (
+            ("speed", signals.speed),
+            ("curv", signals.turning_angle),
+            ("accel", signals.acceleration),
+            ("perr", signals.residual),
+        ):
+            collected[name].append(series.detach().float().cpu().numpy())
+
+    latents = num_latent_frames(spec.default_num_frames, spec)
+    out: dict[str, np.ndarray] = {}
+    for name, stack in collected.items():
+        if not stack:
+            continue
+        mean = np.mean(np.stack(stack), axis=0)
+        # Right-align: an intermediate at index i describes latent frame i + offset.
+        offset = latents - len(mean)
+        expanded = np.full(spec.default_num_frames, np.nan, dtype=np.float64)
+        for index, value in enumerate(mean):
+            for frame in frames_for_latent(index + offset, spec):
+                if frame < expanded.size:
+                    expanded[frame] = value
+        out[name] = expanded
+    return out
+
+
 def across_depth(
     rows: Sequence[Mapping[str, str]],
     sample_id: str,
@@ -283,6 +359,75 @@ def animated_strips(
         figure.canvas.draw()
         rendered[shown] = np.asarray(figure.canvas.buffer_rgba())[..., :3].copy()
         out.append(rendered[shown])
+
+    plt.close(figure)
+    return out
+
+
+def timeline_strips(
+    plausible: Mapping[str, np.ndarray],
+    violated: Mapping[str, np.ndarray],
+    width_px: int,
+    caption: str = "",
+    dpi: int = 100,
+) -> list[np.ndarray]:
+    """One strip per video frame, x = **video frame**, with a playhead that tracks it.
+
+    This is the version where the axis means what it looks like it means. The curve is the
+    per-frame intermediate, the vertical line is the frame currently on screen above, and
+    the marker is the value at that instant -- so a spike lines up with the moment in the
+    clip that caused it.
+
+    The curves are drawn in full from the start rather than revealed, because the whole
+    point is to see the spike coming and then watch the video reach it.
+    """
+    import matplotlib.pyplot as plt
+
+    names = [n for n in PER_FRAME if n in plausible or n in violated]
+    if not names:
+        raise ValueError("no per-frame signals to draw")
+    frames = max(len(s) for s in list(plausible.values()) + list(violated.values()))
+
+    palette.apply_style()
+    figure, axes = plt.subplots(
+        1, len(names), figsize=(width_px / dpi, STRIP_HEIGHT), dpi=dpi, squeeze=False,
+    )
+    limits = {}
+    for name in names:
+        values = np.concatenate([
+            s[~np.isnan(s)] for s in (plausible.get(name), violated.get(name)) if s is not None
+        ])
+        low, high = float(values.min()), float(values.max())
+        margin = 0.08 * (high - low) or max(abs(high), 1.0) * 0.08
+        limits[name] = (low - margin, high + margin)
+
+    out: list[np.ndarray] = []
+    for frame in range(frames):
+        for axis, name in zip(axes[0], names):
+            axis.clear()
+            for series, colour, label in (
+                (plausible.get(name), palette.CATEGORICAL[0], "plausible"),
+                (violated.get(name), palette.CATEGORICAL[7], "violated"),
+            ):
+                if series is None:
+                    continue
+                axis.plot(np.arange(len(series)), series, color=colour, linewidth=1.5,
+                          label=label, zorder=3)
+                if frame < len(series) and not np.isnan(series[frame]):
+                    axis.plot([frame], [series[frame]], marker="o", markersize=5,
+                              color=colour, zorder=5)
+            axis.axvline(frame, color=palette.TEXT_MUTED, linewidth=1.1, zorder=4)
+            axis.set_xlim(0, frames - 1)
+            axis.set_ylim(*limits[name])
+            axis.set_title(palette.statistic_label(name), fontsize=7.5, pad=3)
+            axis.set_xlabel("video frame", fontsize=6.5, labelpad=1)
+            axis.tick_params(labelsize=6)
+        axes[0][0].legend(fontsize=6.5, loc="best")
+        if caption:
+            palette.caption(figure, caption)
+        figure.tight_layout(rect=(0, 0.10 if caption else 0, 1, 1))
+        figure.canvas.draw()
+        out.append(np.asarray(figure.canvas.buffer_rgba())[..., :3].copy())
 
     plt.close(figure)
     return out

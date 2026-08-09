@@ -630,6 +630,144 @@ def step_sweep(cells: Sequence[dict], path: Path, metric: str = "phi_curv") -> O
     return path
 
 
+SWEEP_METRICS = (
+    ("phase_difference_corr", "PhaseLock phase correlation", True),
+    ("raw_score", "motion-mask fidelity to the real clip", True),
+    ("phi_curv", "mean turning angle", False),
+    ("phi_accel", "acceleration", False),
+    ("phi_perr", "prediction residual", False),
+    ("phi_speed", "speed variation", False),
+)
+"""``(column, label, higher_is_better)``. The two reproduction metrics come first: they
+answer whether PhaseLock's effect exists at all before the geometric ones ask whether
+trajectory geometry sees it."""
+
+
+def step_sweep_panels(cells: Sequence[dict], path: Path) -> Optional[Path]:
+    """Every sweep metric against K, one line per blur level, in one figure.
+
+    The whole experiment in one place. PhaseLock's claim is that a 2-step output is more
+    physically consistent than a 50-step one; the confound is that it is also blurrier, so
+    the same blur is applied to the generation *and* the real reference and the question
+    becomes whether the ordering survives.
+
+    Direction is not uniform across these panels and is stated per panel, because reading
+    it wrongly inverts the conclusion: motion-mask fidelity and phase correlation are
+    higher-is-better, while every geometric statistic is lower-is-more-regular.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    available = [
+        (column, label, higher)
+        for column, label, higher in SWEEP_METRICS
+        if any(cell.get(column) not in (None, "") for cell in cells)
+    ]
+    if not available:
+        return None
+
+    sigmas = sorted({float(c["blur_sigma"]) for c in cells})
+    columns = min(3, len(available))
+    rows = (len(available) + columns - 1) // columns
+    figure, axes = plt.subplots(rows, columns, figsize=(4.4 * columns, 3.5 * rows),
+                                squeeze=False)
+
+    for index, (column, label, higher) in enumerate(available):
+        axis = axes[index // columns][index % columns]
+        for position, sigma in enumerate(sigmas):
+            by_step: dict[int, list[float]] = defaultdict(list)
+            for cell in cells:
+                if float(cell["blur_sigma"]) != sigma or cell.get(column) in (None, ""):
+                    continue
+                by_step[int(cell["num_steps"])].append(float(cell[column]))
+            if not by_step:
+                continue
+            steps = sorted(by_step)
+            means = np.array([np.mean(by_step[s]) for s in steps])
+            errors = np.array([np.std(by_step[s]) / max(1, len(by_step[s])) ** 0.5 for s in steps])
+            colour = palette.SEQUENTIAL[min(1 + position, len(palette.SEQUENTIAL) - 1)]
+            axis.plot(steps, means, marker="o", markersize=4, color=colour,
+                      label=f"$\\sigma$ = {sigma:g}")
+            axis.fill_between(steps, means - errors, means + errors, color=colour, alpha=0.16)
+
+        axis.set_title(label, fontsize=10)
+        axis.set_xlabel("denoising steps  K")
+        axis.set_ylabel("higher = better" if higher else "lower = more regular", fontsize=8)
+        axis.set_xticks(sorted({int(c["num_steps"]) for c in cells}))
+
+    for spare in range(len(available), rows * columns):
+        axes[spare // columns][spare % columns].axis("off")
+    axes[0][0].legend(fontsize=8, loc="best", title="blur", title_fontsize=8)
+
+    figure.suptitle("Does the few-step effect survive the blur control?",
+                    x=0.01, ha="left", fontweight="bold")
+    palette.caption(
+        figure,
+        "Blur is applied to the generation and the real reference alike, so a K=2 advantage "
+        "that only exists at sigma=0 was measuring sharpness, not physics. Band = standard "
+        "error over clips. Note the direction differs per panel and is labelled on each y-axis.",
+    )
+    figure.tight_layout(rect=(0, 0.05, 1, 0.96))
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+    return path
+
+
+def generation_quality(cells: Sequence[dict], path: Path) -> Optional[Path]:
+    """Per-scenario fidelity of the generated continuation to the real one.
+
+    Scored against ground truth by the Physics-IQ motion-mask family, which applies here
+    because LikePhys is rendered with a static camera. This says nothing about geometry --
+    it is the independent yardstick that arbitrates when the geometric readout and the
+    fidelity ordering disagree.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    metrics = [
+        ("spatial_iou", "Spatial IoU"),
+        ("spatiotemporal_iou", "Spatiotemporal IoU"),
+        ("weighted_spatial_iou", "Weighted spatial IoU"),
+        ("mse", "MSE  (lower is better)"),
+    ]
+    usable = [(c, l) for c, l in metrics if any(x.get(c) not in (None, "") for x in cells)]
+    if not usable or not cells:
+        return None
+
+    scenarios = sorted({c["scenario"] for c in cells})
+    figure, axes = plt.subplots(1, len(usable), figsize=(3.6 * len(usable), 4.4), squeeze=False)
+
+    for axis, (column, label) in zip(axes[0], usable):
+        values = [
+            [float(c[column]) for c in cells if c["scenario"] == s and c.get(column) not in (None, "")]
+            for s in scenarios
+        ]
+        means = [np.mean(v) if v else np.nan for v in values]
+        order = np.argsort([-m if column != "mse" else m for m in means])
+        axis.barh(
+            np.arange(len(scenarios)),
+            [means[i] for i in order],
+            color=palette.PRIMARY, height=0.72,
+        )
+        axis.set_yticks(np.arange(len(scenarios)), [scenarios[i] for i in order], fontsize=7.5)
+        axis.invert_yaxis()
+        axis.set_title(label, fontsize=9.5)
+        axis.grid(axis="y", visible=False)
+
+    figure.suptitle("Generated continuation vs the real one, per scenario",
+                    x=0.01, ha="left", fontweight="bold")
+    palette.caption(
+        figure,
+        "Both arms start from the same first frame of a *valid* clip, so the real continuation "
+        "is a physically plausible reference. Ground-truth based, so this does not assume the "
+        "geometric readout measures anything.",
+    )
+    figure.tight_layout(rect=(0, 0.05, 1, 0.95))
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+    return path
+
+
 # -- GeoPhys Figure 3 analogue: the statistic itself, not its accuracy -------
 
 

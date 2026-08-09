@@ -199,3 +199,54 @@ def test_statistics_keep_a_stable_colour_everywhere():
 def test_categorical_palette_is_the_validated_order():
     assert palette.CATEGORICAL[0] == "#2a78d6"
     assert palette.PRIMARY != palette.REFERENCE
+
+
+def _sweep_cells():
+    return [
+        {"sample_id": f"c{c}", "scenario": "ball_drop", "num_steps": str(k),
+         "blur_sigma": str(s), "phase_difference_corr": "0.3", "raw_score": str(0.5 - 0.001 * k),
+         "phi_curv": "1.7", "phi_accel": "40", "phi_perr": "2.5", "phi_speed": "1.8"}
+        for c in range(3) for k in (2, 10, 30, 50) for s in (0.0, 8.0, 16.0)
+    ]
+
+
+def test_step_sweep_panels_covers_every_available_metric(tmp_path):
+    from phaselock.analysis.figures import SWEEP_METRICS, step_sweep_panels
+
+    path = step_sweep_panels(_sweep_cells(), tmp_path / "s.png")
+    assert path is not None and path.is_file()
+    # Every metric present in the data should have been drawable.
+    assert all(any(c.get(col) for c in _sweep_cells()) for col, _, _ in SWEEP_METRICS)
+
+
+def test_step_sweep_panels_skips_metrics_the_run_did_not_produce(tmp_path):
+    """An older sweep without the phase columns must still plot the rest."""
+    from phaselock.analysis.figures import step_sweep_panels
+
+    cells = [{k: v for k, v in c.items() if k != "phase_difference_corr"} for c in _sweep_cells()]
+    assert step_sweep_panels(cells, tmp_path / "s.png") is not None
+
+
+def test_step_sweep_panels_returns_none_with_no_usable_metric(tmp_path):
+    from phaselock.analysis.figures import step_sweep_panels
+
+    bare = [{"sample_id": "c", "num_steps": "2", "blur_sigma": "0.0"}]
+    assert step_sweep_panels(bare, tmp_path / "s.png") is None
+
+
+def test_generation_quality_ranks_scenarios(tmp_path):
+    from phaselock.analysis.figures import generation_quality
+
+    cells = [
+        {"sample_id": f"{s}/000/valid", "scenario": s, "spatial_iou": str(v),
+         "spatiotemporal_iou": str(v / 8), "weighted_spatial_iou": str(v / 2), "mse": str(1 - v)}
+        for s, v in (("ball_drop", 0.9), ("river", 0.4), ("flag", 0.15))
+    ]
+    path = generation_quality(cells, tmp_path / "g.png")
+    assert path is not None and path.is_file()
+
+
+def test_generation_quality_returns_none_when_empty(tmp_path):
+    from phaselock.analysis.figures import generation_quality
+
+    assert generation_quality([], tmp_path / "g.png") is None
