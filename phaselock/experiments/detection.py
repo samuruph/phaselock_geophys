@@ -54,6 +54,12 @@ from ..probes import LATENT, VELOCITY, ProbeRecord, StatisticRow, supports_exact
 
 logger = logging.getLogger(__name__)
 
+MIN_SCORABLE_PAIRS = 2
+"""Fewer than two pairs makes a pairwise accuracy 0% or 100% by construction, with no
+information in it. Smoke runs must therefore use at least two pairs to exercise scoring
+at all -- `data__limit=1` extracts fine and then reports nothing.
+"""
+
 
 @dataclass(frozen=True)
 class SignalKey:
@@ -421,29 +427,30 @@ def score_signals(
         scorable += [("coupling", "alignment"), ("coupling", "erosion")]
 
         for kind, name in scorable:
-            if True:
-                column = name if kind == "coupling" else f"{kind}_{name}"
-                # Drop only the pairs with a missing value, not the whole signal: the
-                # last recorded step legitimately has no drift, and the latent carries
-                # alignment where other sources do not.
-                complete = [
-                    (
-                        _maybe_float(by_sample[pair.plausible.sample_id].get(column)),
-                        _maybe_float(by_sample[pair.violated.sample_id].get(column)),
-                        pair.scenario,
-                    )
-                    for pair in usable
-                ]
-                complete = [entry for entry in complete if entry[0] is not None and entry[1] is not None]
-                if len(complete) < 2:
-                    continue
-
-                results[SignalKey(source, block, step, name, kind)] = evaluate_pairs(
-                    [entry[0] for entry in complete],
-                    [entry[1] for entry in complete],
-                    groups=[entry[2] for entry in complete],
-                    resamples=resamples,
+            column = name if kind == "coupling" else f"{kind}_{name}"
+            # Drop only the pairs with a missing value, not the whole signal: the
+            # last recorded step legitimately has no drift, and the latent carries
+            # alignment where other sources do not.
+            complete = [
+                (
+                    _maybe_float(by_sample[pair.plausible.sample_id].get(column)),
+                    _maybe_float(by_sample[pair.violated.sample_id].get(column)),
+                    pair.scenario,
                 )
+                for pair in usable
+            ]
+            complete = [entry for entry in complete if entry[0] is not None and entry[1] is not None]
+            # Below two pairs a "pairwise accuracy" is 0% or 100% by construction and
+            # carries no information, so such signals are dropped rather than reported.
+            if len(complete) < MIN_SCORABLE_PAIRS:
+                continue
+
+            results[SignalKey(source, block, step, name, kind)] = evaluate_pairs(
+                [entry[0] for entry in complete],
+                [entry[1] for entry in complete],
+                groups=[entry[2] for entry in complete],
+                resamples=resamples,
+            )
     return results
 
 

@@ -397,7 +397,7 @@ much motion exists. Unlike alignment it is unsigned and unbounded.
 
 ### From a number to an accuracy
 
-[`statistics_from_record`](../phaselock/experiments/detection.py#L74) turns a probe record
+[`statistics_from_record`](../phaselock/experiments/detection.py#L80) turns a probe record
 into the rows of `statistics.csv`, and is where the exact-versus-empirical choice is made
 per source. Then, per signal, over matched pairs:
 

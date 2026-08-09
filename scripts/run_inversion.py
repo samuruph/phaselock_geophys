@@ -98,7 +98,14 @@ def main() -> None:
 
     results = score_signals(rows, pairs, resamples=config.metrics.bootstrap_resamples)
     if not results:
-        logger.error("no scorable signals; check that both members of each pair were extracted")
+        from phaselock.experiments.detection import MIN_SCORABLE_PAIRS
+
+        logger.error(
+            "no scorable signals from %d pair(s). A pairwise accuracy needs at least %d "
+            "pairs -- below that it is 0%% or 100%% by construction. Raise data__limit, "
+            "or check that both members of each pair were extracted.",
+            len(pairs), MIN_SCORABLE_PAIRS,
+        )
         return
 
     # OR and Majority across the five statistics. These carry GeoPhys's headline numbers
