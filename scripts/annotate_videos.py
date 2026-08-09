@@ -1,0 +1,105 @@
+#!/usr/bin/env python
+"""Draw a run's computed signals underneath the videos it already wrote.
+
+    python scripts/annotate_videos.py /data/experiments/.../likephys/inversion
+    python scripts/annotate_videos.py <run_dir> --location hidden_states/b22
+
+Pure post-processing: reads ``statistics.csv`` and the mp4s in ``visuals/``, and writes
+``*_signals.mp4`` beside them. Seconds of CPU, no GPU, nothing recomputed. Safe to re-run
+with a different ``--location`` to look at another probe point.
+
+What it can and cannot show is set by what the run stored; see the module docstring of
+``phaselock/analysis/signal_overlay.py``. In short: the x-axis is the **denoising step**,
+because the per-video-frame intermediates are summarised away before anything is written
+to disk, and there is no spatial map, because pooling happens inside the forward hook.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from phaselock.analysis import signal_overlay
+from phaselock.datasets import get_paired_dataset
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("run_dir", type=Path)
+    parser.add_argument(
+        "--location", default=None, metavar="SOURCE[/bN]",
+        help="probe point to draw, e.g. hidden_states/b22 or latent. "
+             "Default: the middle hidden-state block.",
+    )
+    parser.add_argument("--fps", type=int, default=12)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    run = args.run_dir
+
+    statistics = run / "statistics.csv"
+    if not statistics.is_file():
+        raise SystemExit(f"no statistics.csv under {run}")
+    videos = next((d for d in (run / "visuals", run / "videos") if d.is_dir()), None)
+    if videos is None:
+        raise SystemExit(f"no visuals/ or videos/ under {run}; run with --save-visuals")
+
+    with open(statistics, newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    source, block = signal_overlay.choose_location(rows, args.location)
+    taus = {int(r["step"]): float(r["tau"]) for r in rows}
+    print(f"drawing {source} block {block} over {len({r['step'] for r in rows})} steps")
+
+    config = json.loads((run / "config.json").read_text())
+    dataset = get_paired_dataset(config["data"]["name"])
+    pairs = dataset.select(limit=config["data"]["limit"], seed=config["data"]["seed"])
+
+    written = 0
+    for pair in pairs:
+        stem = pair.violated.sample_id.replace("/", "_")
+        plausible = signal_overlay.per_step(rows, pair.plausible.sample_id, source, block)
+        violated = signal_overlay.per_step(rows, pair.violated.sample_id, source, block)
+        if not plausible or not violated:
+            continue
+
+        # One strip per pair, reused across that pair's videos: the signals belong to the
+        # clips, not to a particular rendering of them.
+        strip = None
+        for suffix in ("pair", "inversion", "roundtrip"):
+            path = videos / f"{stem}_{suffix}.mp4"
+            if not path.is_file():
+                continue
+            if strip is None:
+                import cv2
+
+                capture = cv2.VideoCapture(str(path))
+                width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+                capture.release()
+                strip = signal_overlay.signal_strip(
+                    plausible, violated, width, taus=taus,
+                    caption=(
+                        f"{source} block {block}. x = denoising timestep (0 = clean video, "
+                        f"1000 = noise), not video time -- statistics.csv stores each clip's "
+                        f"temporal summary, not its per-frame values. No spatial map: "
+                        f"activations are mean-pooled over space before any statistic exists."
+                    ),
+                )
+            out = signal_overlay.attach(path, videos / f"{stem}_{suffix}_signals.mp4",
+                                        strip, fps=args.fps)
+            print(f"  wrote {out.name}")
+            written += 1
+
+    print(f"\n{written} annotated videos in {videos}")
+
+
+if __name__ == "__main__":
+    main()

@@ -60,7 +60,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 301 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 313 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
@@ -469,6 +469,34 @@ same thing under two names.
 All are **H.264 / yuv420p**, so they play inline in a VS Code tab or a browser. OpenCV's
 default `mp4v` is MPEG-4 Part 2, which Chromium cannot decode — those files play in VLC
 and render as green mush everywhere else.
+
+### Seeing the signals under the video
+
+```bash
+python scripts/annotate_videos.py <run_dir>
+python scripts/annotate_videos.py <run_dir> --location hidden_states/b22
+```
+
+Writes `*_signals.mp4` beside each video, with the five statistics for that exact clip
+drawn underneath — plausible in blue, violated in red, shaded between them. The shading is
+the point: every statistic is oriented so larger means less regular, so **violated above
+plausible is the signal calling that pair correctly**, and each panel is labelled with how
+many denoising steps it got right.
+
+This is pure post-processing over `statistics.csv` and the existing mp4s. Seconds of CPU,
+no GPU, nothing recomputed, and safe to re-run with a different `--location`.
+
+**Two things it deliberately cannot show**, both consequences of what a run stores:
+
+- **No spatial map.** Activations are mean-pooled over space *inside the forward hook* —
+  `(T, tokens, D)` becomes `(T, D)` before any statistic exists. Where in the frame a
+  violation happened is gone at that point, by design, because GeoPhys is defined on a
+  pooled per-frame trajectory. Recovering it would need `probe.pooling=flatten` and a
+  re-run.
+- **The x-axis is the denoising step, not video time.** `statistics.csv` stores each
+  clip's temporal *summary* — a mean or standard deviation over its frames — not the
+  per-frame intermediates. Plotting `s_t` against video time would need
+  `probe.save_trajectories=true` and a re-run.
 
 ---
 
