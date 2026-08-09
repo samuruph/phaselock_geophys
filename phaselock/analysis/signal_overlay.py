@@ -367,6 +367,120 @@ def animated_strips(
     return out
 
 
+PLAUSIBLE_COLOUR = "#1b9e5a"
+VIOLATED_COLOUR = "#d1495b"
+DELTA_COLOUR = "#8d6bc8"
+"""GeoPhys Figure 4's scheme: green valid, red invalid, and the difference in violet."""
+
+
+def _draw_timeline(
+    axes,
+    names: Sequence[str],
+    plausible: Mapping[str, np.ndarray],
+    violated: Mapping[str, np.ndarray],
+    limits: Mapping[str, tuple[float, float]],
+    playhead: Optional[int] = None,
+) -> None:
+    """One panel per signal: both clips, plus the signed gap filled against zero.
+
+    The delta is the part that earns the figure. Two curves that nearly overlap look
+    identical, and the question is not whether they differ overall but *when* -- whether
+    the gap opens at the moment the violation happens. Filling it against zero on the same
+    axis makes that readable at a glance, which is exactly what GeoPhys Figure 4 does.
+
+    Sign convention here is the repo's, not the paper's: **violated minus plausible**, so
+    a positive fill means the detector is calling that frame correctly. GeoPhys plots
+    valid minus invalid, the other way round.
+    """
+    for axis, name in zip(axes, names):
+        axis.clear()
+        low, high = plausible.get(name), violated.get(name)
+
+        if low is not None and high is not None and len(low) == len(high):
+            frames = np.arange(len(low))
+            delta = high - low
+            baseline = limits[name][0]
+            # Anchored to the panel floor rather than to zero: these statistics are far
+            # from zero, so a fill at true zero would be off-screen.
+            axis.fill_between(frames, baseline, baseline + np.nan_to_num(delta),
+                              where=~np.isnan(delta), color=DELTA_COLOUR, alpha=0.45,
+                              linewidth=0, zorder=2,
+                              label="violated - plausible")
+            axis.axhline(baseline, color=palette.TEXT_MUTED, linewidth=0.8,
+                         linestyle=(0, (3, 3)), zorder=1)
+
+        for series, colour, label in (
+            (low, PLAUSIBLE_COLOUR, "plausible"),
+            (high, VIOLATED_COLOUR, "violated"),
+        ):
+            if series is None:
+                continue
+            axis.plot(np.arange(len(series)), series, color=colour, linewidth=1.6,
+                      label=label, zorder=3)
+            if playhead is not None and playhead < len(series) and not np.isnan(series[playhead]):
+                axis.plot([playhead], [series[playhead]], marker="o", markersize=5,
+                          color=colour, zorder=5)
+
+        if playhead is not None:
+            axis.axvline(playhead, color=palette.TEXT_PRIMARY, linewidth=1.2, zorder=4)
+
+        axis.set_xlim(0, max(len(s) for s in (low, high) if s is not None) - 1)
+        axis.set_ylim(*limits[name])
+        axis.set_title(palette.statistic_label(name), fontsize=8, pad=3)
+        axis.set_xlabel("video frame", fontsize=7, labelpad=1)
+        axis.tick_params(labelsize=6.5)
+
+
+def _timeline_limits(
+    names: Sequence[str],
+    plausible: Mapping[str, np.ndarray],
+    violated: Mapping[str, np.ndarray],
+) -> dict[str, tuple[float, float]]:
+    """Fixed y-limits with headroom below for the delta fill."""
+    limits = {}
+    for name in names:
+        stack = [s for s in (plausible.get(name), violated.get(name)) if s is not None]
+        values = np.concatenate([s[~np.isnan(s)] for s in stack])
+        low, high = float(values.min()), float(values.max())
+        span = (high - low) or max(abs(high), 1.0)
+        limits[name] = (low - 0.35 * span, high + 0.10 * span)
+    return limits
+
+
+def timeline_figure(
+    plausible: Mapping[str, np.ndarray],
+    violated: Mapping[str, np.ndarray],
+    path: Path,
+    title: str = "",
+    caption: str = "",
+) -> Optional[Path]:
+    """Static version: every per-frame signal with its delta, one panel each."""
+    import matplotlib.pyplot as plt
+
+    names = [n for n in PER_FRAME if n in plausible or n in violated]
+    if not names:
+        return None
+
+    palette.apply_style()
+    figure, axes = plt.subplots(1, len(names), figsize=(4.0 * len(names), 3.6), squeeze=False)
+    _draw_timeline(axes[0], names, plausible, violated,
+                   _timeline_limits(names, plausible, violated))
+    axes[0][0].legend(fontsize=7.5, loc="upper left")
+    if title:
+        figure.suptitle(title, x=0.01, ha="left", fontweight="bold")
+    palette.caption(figure, caption or (
+        "Per-frame signal for both clips, with the signed gap filled against the panel "
+        "floor. Positive fill = the violated clip scores higher, which is the detector "
+        "calling that frame correctly. Values are per latent frame, held across the four "
+        "video frames each latent encodes, so the curves are step functions."
+    ))
+    figure.tight_layout(rect=(0, 0.06, 1, 0.94 if title else 1))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+    return path
+
+
 def timeline_strips(
     plausible: Mapping[str, np.ndarray],
     violated: Mapping[str, np.ndarray],
@@ -376,13 +490,12 @@ def timeline_strips(
 ) -> list[np.ndarray]:
     """One strip per video frame, x = **video frame**, with a playhead that tracks it.
 
-    This is the version where the axis means what it looks like it means. The curve is the
-    per-frame intermediate, the vertical line is the frame currently on screen above, and
-    the marker is the value at that instant -- so a spike lines up with the moment in the
-    clip that caused it.
+    The animated twin of :func:`timeline_figure`. The axis means what it looks like it
+    means here: the vertical line is the frame on screen above, so a spike in the delta
+    lines up with the moment in the clip that caused it.
 
-    The curves are drawn in full from the start rather than revealed, because the whole
-    point is to see the spike coming and then watch the video reach it.
+    Curves are drawn in full from the start rather than revealed -- the point is to see
+    the spike coming and then watch the video reach it.
     """
     import matplotlib.pyplot as plt
 
@@ -390,42 +503,16 @@ def timeline_strips(
     if not names:
         raise ValueError("no per-frame signals to draw")
     frames = max(len(s) for s in list(plausible.values()) + list(violated.values()))
+    limits = _timeline_limits(names, plausible, violated)
 
     palette.apply_style()
     figure, axes = plt.subplots(
         1, len(names), figsize=(width_px / dpi, STRIP_HEIGHT), dpi=dpi, squeeze=False,
     )
-    limits = {}
-    for name in names:
-        values = np.concatenate([
-            s[~np.isnan(s)] for s in (plausible.get(name), violated.get(name)) if s is not None
-        ])
-        low, high = float(values.min()), float(values.max())
-        margin = 0.08 * (high - low) or max(abs(high), 1.0) * 0.08
-        limits[name] = (low - margin, high + margin)
-
     out: list[np.ndarray] = []
     for frame in range(frames):
-        for axis, name in zip(axes[0], names):
-            axis.clear()
-            for series, colour, label in (
-                (plausible.get(name), palette.CATEGORICAL[0], "plausible"),
-                (violated.get(name), palette.CATEGORICAL[7], "violated"),
-            ):
-                if series is None:
-                    continue
-                axis.plot(np.arange(len(series)), series, color=colour, linewidth=1.5,
-                          label=label, zorder=3)
-                if frame < len(series) and not np.isnan(series[frame]):
-                    axis.plot([frame], [series[frame]], marker="o", markersize=5,
-                              color=colour, zorder=5)
-            axis.axvline(frame, color=palette.TEXT_MUTED, linewidth=1.1, zorder=4)
-            axis.set_xlim(0, frames - 1)
-            axis.set_ylim(*limits[name])
-            axis.set_title(palette.statistic_label(name), fontsize=7.5, pad=3)
-            axis.set_xlabel("video frame", fontsize=6.5, labelpad=1)
-            axis.tick_params(labelsize=6)
-        axes[0][0].legend(fontsize=6.5, loc="best")
+        _draw_timeline(axes[0], names, plausible, violated, limits, playhead=frame)
+        axes[0][0].legend(fontsize=6, loc="upper left")
         if caption:
             palette.caption(figure, caption)
         figure.tight_layout(rect=(0, 0.10 if caption else 0, 1, 1))

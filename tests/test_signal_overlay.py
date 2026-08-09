@@ -140,3 +140,63 @@ def test_attach_rejects_a_missing_video(tmp_path):
         signal_overlay.attach(
             tmp_path / "nope.mp4", tmp_path / "o.mp4", np.zeros((10, 10, 3), dtype=np.uint8)
         )
+
+
+def _frames(value, n=24, spike_from=None, spike=0.0):
+    series = np.full(n, float(value))
+    if spike_from is not None:
+        series[spike_from:] += spike
+    return series
+
+
+def test_timeline_figure_draws_one_panel_per_per_frame_signal(tmp_path):
+    low = {name: _frames(2.0) for name in signal_overlay.PER_FRAME}
+    high = {name: _frames(2.0, spike_from=12, spike=0.8) for name in signal_overlay.PER_FRAME}
+    path = signal_overlay.timeline_figure(low, high, tmp_path / "t.png", title="x")
+    assert path is not None and path.is_file()
+
+
+def test_timeline_figure_returns_none_without_per_frame_signals(tmp_path):
+    # `ang` is a std over the clip and has no per-frame form, so it alone is not enough.
+    assert signal_overlay.timeline_figure({"ang": _frames(1.0)}, {}, tmp_path / "t.png") is None
+
+
+def test_timeline_limits_leave_room_below_for_the_delta_fill():
+    """The gap is filled against the panel floor, so the floor must sit below the data."""
+    low = {"speed": _frames(2.0)}
+    high = {"speed": _frames(2.4)}
+    limits = signal_overlay._timeline_limits(["speed"], low, high)
+    floor, ceiling = limits["speed"]
+    assert floor < 2.0, "no headroom for the fill"
+    assert ceiling > 2.4
+
+
+def test_timeline_strips_produce_one_frame_each_with_a_playhead(tmp_path):
+    low = {name: _frames(2.0, n=10) for name in signal_overlay.PER_FRAME}
+    high = {name: _frames(2.3, n=10) for name in signal_overlay.PER_FRAME}
+    strips = signal_overlay.timeline_strips(low, high, width_px=800)
+    assert len(strips) == 10
+    # The playhead moves, so consecutive frames must differ.
+    assert not np.array_equal(strips[0], strips[5])
+
+
+def test_per_video_frame_holds_each_latent_across_its_video_frames():
+    """21 latent measurements stretched over 81 video frames, not 81 measurements."""
+    import torch
+
+    from phaselock.backends import get_spec
+    from phaselock.probes import LATENT, ProbeRecord, TrajectoryKey
+
+    spec = get_spec("wan21_t2v_1_3b")
+    torch.manual_seed(0)
+    record = ProbeRecord(
+        trajectories={TrajectoryKey(LATENT, -1, 0): torch.randn(21, 8)},
+        taus={0: 1.0},
+        provenance={},
+    )
+    series = signal_overlay.per_video_frame(record, spec, source=LATENT)
+    assert set(series) <= set(signal_overlay.PER_FRAME)
+    speed = series["speed"]
+    assert speed.size == spec.default_num_frames == 81
+    # Distinct values cannot exceed the latent count, since each is held across its frames.
+    assert len(set(speed[~np.isnan(speed)].tolist())) <= 21

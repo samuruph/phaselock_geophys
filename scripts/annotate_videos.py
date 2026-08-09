@@ -43,6 +43,10 @@ def parse_args() -> argparse.Namespace:
         "--static", action="store_true",
         help="one fixed strip at a single block, instead of the animated depth summary",
     )
+    parser.add_argument(
+        "--no-timeline", action="store_true",
+        help="skip the per-video-frame view even when trajectories were saved",
+    )
     return parser.parse_args()
 
 
@@ -67,6 +71,16 @@ def main() -> None:
     dataset = get_paired_dataset(config["data"]["name"])
     pairs = dataset.select(limit=config["data"]["limit"], seed=config["data"]["seed"])
 
+    # Trajectories are what make video time a usable axis: statistics.csv only keeps the
+    # per-clip summaries, and a mean cannot be inverted into the values behind it.
+    trajectories = run / "trajectories"
+    spec = None
+    if trajectories.is_dir() and not args.no_timeline:
+        from phaselock.backends import get_spec
+
+        spec = get_spec(config["backend"]["name"])
+        print(f"found trajectories: also drawing per-video-frame signals")
+
     written = 0
     for pair in pairs:
         stem = pair.violated.sample_id.replace("/", "_")
@@ -79,6 +93,31 @@ def main() -> None:
         # clips, not to a particular rendering of them.
         depth_plausible = signal_overlay.across_depth(rows, pair.plausible.sample_id, source)
         depth_violated = signal_overlay.across_depth(rows, pair.violated.sample_id, source)
+
+        # GeoPhys Figure 4's view: each signal against video time for both clips, with the
+        # signed gap filled, so *when* the detector fires can be lined up against what is
+        # happening on screen.
+        timeline = None
+        if spec is not None:
+            from phaselock.probes import ProbeRecord
+
+            try:
+                low = signal_overlay.per_video_frame(
+                    ProbeRecord.load(trajectories / pair.plausible.sample_id.replace("/", "_")),
+                    spec, source)
+                high = signal_overlay.per_video_frame(
+                    ProbeRecord.load(trajectories / pair.violated.sample_id.replace("/", "_")),
+                    spec, source)
+            except FileNotFoundError:
+                low = high = {}
+            if low and high:
+                timeline = (low, high)
+                figure = signal_overlay.timeline_figure(
+                    low, high, videos / f"{stem}_timeline.png",
+                    title=f"{pair.scenario} - {pair.violation}   ({source})")
+                if figure:
+                    print(f"  wrote {figure.name}")
+                    written += 1
 
         cached = None
         for suffix in ("pair", "inversion", "roundtrip"):
@@ -104,6 +143,15 @@ def main() -> None:
                     cached = (width, signal_overlay.signal_strip(
                         plausible, violated, width, taus=taus, caption=caption))
                 out = signal_overlay.attach(path, out_path, cached[1], fps=args.fps)
+            elif timeline is not None:
+                strips = signal_overlay.timeline_strips(
+                    timeline[0], timeline[1], width,
+                    caption=(
+                        f"Per-frame signal from {source}, averaged over depth. Green = "
+                        f"plausible, red = violated, violet = the gap (positive means the "
+                        f"detector is right at that frame). The line marks the frame above."
+                    ))
+                out = signal_overlay.attach_animated(path, out_path, strips, fps=args.fps)
             else:
                 caption = (
                     f"Line = mean over all {source} blocks, band = 1 s.d. across depth. "
