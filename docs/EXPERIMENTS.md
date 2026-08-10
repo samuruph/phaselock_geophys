@@ -125,7 +125,7 @@ Both are CPU-only and take seconds.
 3. **The selection null** in `01_source_comparison.png`. A bar must clear the grey band
    and a diamond the dashed line — they are different floors for different statistics.
 4. **A `_pair.mp4`**, to confirm the violation survives preprocessing at all.
-5. **`figures/06_by_scenario.png`** and `category_scenario.csv`, which say *where* each
+5. **`figures/06_by_family.png`** and `category_family.csv`, which say *where* each
    signal fails. The aggregate hides this: at n=96 the best cell scored 100% on four
    scenarios and 50% on `river`. Default is `family` (rigid body / soft body / fluid / optical), the only grouping that survives a small balanced draw: 12 pairs give one clip per scenario but two to five per family. `--category scenario` and `--category violation` give finer splits, though
    LikePhys's 56 violation types mostly have too few pairs each to mean anything.
