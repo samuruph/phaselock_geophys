@@ -1062,8 +1062,11 @@ def category_table(
                 grid[r, c] = 100 * cell.mean
 
     figure, axis = plt.subplots(
-        figsize=(1.05 * len(categories) + 4.2, 0.42 * len(rows) + 2.6)
+        figsize=(1.05 * len(categories) + 5.0, 0.42 * len(rows) + 2.6)
     )
+    # A dedicated left margin for the source labels. Placed relative to the axes they
+    # sat on top of the statistic names, whose width depends on the longest one.
+    figure.subplots_adjust(left=0.30)
     # Diverging about chance, so 50% reads as "nothing" rather than as a colour. Clipped
     # symmetrically: without it one 100% cell washes out every real difference.
     image = axis.imshow(grid, cmap="RdYlGn", vmin=30, vmax=90, aspect="auto")
@@ -1098,9 +1101,9 @@ def category_table(
             continue
         if start:
             axis.axhline(start - 0.5, color=palette.TEXT_PRIMARY, linewidth=1.8)
-        axis.text(-0.135, 1 - (start + count / 2) / len(rows), palette.source_label(src),
-                  transform=axis.transAxes, ha="center", va="center",
-                  fontsize=9, fontweight="bold", rotation=90)
+        axis.text(0.055, 1 - (start + count / 2) / len(rows), palette.source_label(src),
+                  transform=figure.transFigure, ha="center", va="center",
+                  fontsize=9.5, fontweight="bold", rotation=90)
         start += count
 
     figure.colorbar(image, ax=axis, fraction=0.022, pad=0.015, label=value_label)
@@ -1111,7 +1114,6 @@ def category_table(
         "works everywhere or only in patches, and the max is what a best-of-N search "
         "would have found. 50% is chance."
     ))
-    figure.tight_layout(rect=(0.10, 0.05, 1, 1))
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, bbox_inches="tight", dpi=140)
     plt.close(figure)

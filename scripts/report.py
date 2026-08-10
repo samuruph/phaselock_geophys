@@ -113,16 +113,27 @@ def write_category_table(run_dir: Path, key: str) -> None:
         limit=config["data"]["limit"], seed=config["data"]["seed"])
 
     cells = score_by_category(statistics, pairs, key=key)
+
+    # The external baseline belongs in the same table: "which representation is best per
+    # family" is not answerable without the thing it is being compared against. DINOv2's
+    # rows are mapped onto the same schema, layer standing in for block.
+    directory, _ = external_dir(run_dir)
+    external = load(directory / "external_statistics.csv")
+    if external:
+        cells += score_by_category(
+            [dict(row, source="dinov2", block=row.get("encoder_layer", "0"), step="0")
+             for row in external],
+            pairs, key=key,
+        )
+
     if not cells:
         print(f"  (no category breakdown: fewer than 2 pairs in every {key})")
         return
 
-    table = run_dir / f"category_{key}.csv"
-    with open(table, "w", newline="") as handle:
-        writer = _csv.DictWriter(handle, fieldnames=list(cells[0].flatten()))
-        writer.writeheader()
-        writer.writerows(c.flatten() for c in cells)
-    print(f"  {table.name}")
+    from phaselock.analysis.spreadsheet import write_category_workbook
+
+    book = write_category_workbook(cells, run_dir / f"category_{key}.xlsx", key=key)
+    print(f"  {book.name}")
 
     produced = category_table(
         cells, run_dir / "figures" / f"06_by_{key}.png",

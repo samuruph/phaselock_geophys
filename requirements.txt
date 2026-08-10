@@ -7,3 +7,4 @@ opencv-python>=4.8.0
 pillow>=9.0.0
 numpy>=1.21.0
 pyyaml>=6.0
+openpyxl>=3.1   # .xlsx export for the category table
