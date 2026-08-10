@@ -151,18 +151,21 @@ Two things about that `v_t` matter for reading these as physics:
 | `φ_momentum` | `Σ v_t` telescopes to `z̄_T − z̄_1`, so this is net displacement over path length, subtracted from 1 | 0 for a straight line, 1 for a round trip. How little of the distance travelled went anywhere |
 | `φ_jerk` | `a_t = v_{t+1} − v_t`, then `j_t = a_{t+1} − a_t`, then `mean({‖j_t‖²})` | acceleration is force, jerk is its *change*. Constant acceleration — a ball under gravity — gives exactly zero; a teleport, a freeze or an inserted collision is a discontinuity in acceleration and spikes |
 
-> **Measured, on 5 archived LikePhys pairs with Wan.** `φ_jerk` is the strongest single
-> statistic in the whole set — 91.3% on hidden states against `φ_accel`'s 88.6% —
-> and `φ_momentum` reaches 77.9%.
+> **Measured at n=100 on LikePhys with Wan.** `φ_jerk` is the strongest of the three and
+> the only signal strong on *every* source — 68.8% on hidden states, 72.2% on the flow
+> velocity — placing it third overall behind `φ_perr` and `φ_accel` and ahead of all three
+> GeoPhys shape statistics. `φ_momentum` is a weak positive at 55–60%.
 >
-> **`φ_energy` reads 23.1%, far *below* chance, and that is a result rather than a
-> failure.** It means the orientation is backwards: *plausible* clips have the more
-> variable energy. There is a physical reading — real dynamics exchange energy
-> continuously as a ball falls, bounces and slows, while many injected violations impose
-> unnaturally *uniform* motion — and 27 points below chance is more discriminative than
-> `φ_perr`'s 18 above it. But flipping the sign on the evidence that suggested it is
-> post-hoc, so it is left as measured. The n=100 run is independent of these five pairs
-> and will settle it.
+> **`φ_energy` reads 28–32% on all four internal sources, far *below* chance, and that is
+> a result rather than a failure.** It means the orientation is backwards: *plausible*
+> clips have the more variable energy. There is a physical reading — real dynamics
+> exchange energy continuously as a ball falls, bounces and slows, while LikePhys
+> violations edit motion toward something uniform.
+>
+> **Do not flip it.** On IntPhys2 the same statistic reads 55–57%, *above* chance, so
+> flipping would turn a 55% signal into a 45% one on held-out data. The inversion belongs
+> to how LikePhys builds its violated clips, not to the statistic. See
+> [RESULTS.md](RESULTS.md) §4.
 
 **These are analogies, and calling them energy and momentum is suggestive naming rather
 than physics.** There is no mass, no metric and no gravity direction in a pooled feature

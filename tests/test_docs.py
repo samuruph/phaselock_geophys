@@ -16,7 +16,7 @@ import pytest
 from phaselock.config import Config
 
 ROOT = Path(__file__).parent.parent
-DOCS = ["README.md", "docs/RUNNING.md", "docs/METHOD.md", "docs/VALIDATION.md"]
+DOCS = ["README.md", "docs/RUNNING.md", "docs/METHOD.md", "docs/RESULTS.md"]
 
 
 @pytest.mark.parametrize("doc", DOCS)

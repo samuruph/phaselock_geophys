@@ -30,18 +30,16 @@ carry the signal at all.
 
 ## Documentation
 
-Five documents, and they do not overlap. Pick by the question you have:
+Three documents, and they do not overlap. Pick by the question you have:
 
 | your question | document |
 |---|---|
-| *"How do I just run everything?"* | **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)** — the one-command path, the knobs, what it costs and what to check when it finishes. |
-| *"How does a single stage work?"* | **[docs/RUNNING.md](docs/RUNNING.md)** — **start here.** Exact commands per stage, what each reads and writes, CSV schemas, the output tree, measured cost and storage, which sweeps matter. Operational only: no derivations, no findings. |
-| *"What is being measured, and how exactly?"* | **[docs/METHOD.md](docs/METHOD.md)** — every signal defined and derived, step-by-step computation for each, where the papers were ambiguous and what was chosen instead. Self-contained; the deep links into the code are a convenience, not a dependency. No numbers from any run. |
-| *"What did we find?"* | **[docs/RESULTS.md](docs/RESULTS.md)** — the measured numbers, which model and dataset produced each, what they mean, and what should not yet be believed. Every claim is tagged with its backend. |
-| *"Does any of this actually work?"* | **[docs/VALIDATION.md](docs/VALIDATION.md)** — the GPU bring-up ladder and its recorded outcome, including the four real bugs only a GPU run could surface. A log, kept because the failures are the useful part. |
+| *"What did we find?"* | **[docs/RESULTS.md](docs/RESULTS.md)** — **start here.** The measured numbers, which model and dataset produced each, what they mean, and what should not yet be believed. Every claim is tagged with its backend. |
+| *"How do I run it?"* | **[docs/RUNNING.md](docs/RUNNING.md)** — the one-command path, the knobs, the stages, cost, the output tree, config keys, and what to check when it finishes. Operational only: no derivations, no findings. |
+| *"What exactly is being measured?"* | **[docs/METHOD.md](docs/METHOD.md)** — every signal defined and derived, step by step, and where the papers were ambiguous. Self-contained; the deep links into the code are a convenience, not a dependency. No numbers from any run. |
 
-The split is deliberate: **RUNNING** goes stale when commands change, **METHOD** only when
-the maths changes, **RESULTS** on every run, and **VALIDATION** never — it is history.
+The split is by what makes each go stale: **RUNNING** when commands change, **METHOD** only
+when the maths changes, **RESULTS** on every run.
 
 ## Install
 
@@ -50,65 +48,22 @@ pip install -r requirements.txt
 python -m pytest tests/ -q          # 365 tests, CPU only, no weights needed
 ```
 
-## The five statistics
+## What is measured
 
-On a pooled per-frame trajectory `Z = (z̄₁ … z̄_T) ∈ R^{T×D}`:
-
-```
-v_t = z̄_{t+1} − z̄_t          s_t = ‖v_t‖        θ_t = ∠(v_t, v_{t+1})
-a_t = z̄_{t+2} − 2z̄_{t+1} + z̄_t                  ε_t = z̄_{t+1} − ẑ_{t+1}
-
-φ_speed = std({s_t})     φ_curv = mean({θ_t})    φ_ang = std({θ_t})
-φ_accel = mean({‖a_t‖²})                          φ_perr = mean({‖ε_t‖})
-```
-
-Larger means less regular, hence less plausible. `s_t` and `θ_t` are per-frame
-intermediates, not statistics — the statistics are their temporal summaries.
-
-Two places the source material is unusable as literally written, both handled explicitly
-and documented at the call site:
-
-- **`φ_perr` is underdetermined.** Fitting `P_H : R^{H·D} → R^D` on one video's windows
-  is underdetermined whenever `H·D` exceeds the window count, which it always does here
-  (CogVideoX: 10 windows, 9216 unknowns), so the in-sample residual collapses to exactly
-  zero. The default follows the paper's own *geometric* reading instead — the component
-  of `z̄_{t+1}` orthogonal to the affine span of the previous `H` frames — which is
-  well-posed and training-free. `ridge` and `scalar` fits are available for comparison.
-  `H` is never stated in the paper; default 3.
-- **`arccos` is the wrong formula numerically.** It loses roughly half its precision near
-  0 and π, exactly where a near-straight trajectory sits, and its derivative diverges
-  there. A perfectly straight float32 trajectory returns ~2e-4 rather than 0. The
-  algebraically identical half-angle form is used instead, which matters because the
-  flow-coupling metrics differentiate these statistics.
-
-## Coupling the two velocities
-
-GeoPhys's velocity runs along the **frame** axis; a flow sampler's runs along the
-**denoising** axis. They are linked exactly, because the frame-difference operator `D`
-and spatial mean pooling are linear and so commute with the sampler ODE:
+Eight scalars per trajectory, computed on a pooled per-frame path
+`Z = (z̄₁ … z̄_T) ∈ R^{T×D}` — GeoPhys's five shape statistics plus three
+physics-motivated additions — and three metrics coupling the *frame* velocity to the
+sampler's *denoising* velocity, which are linked exactly because differencing and pooling
+are linear and commute with the ODE:
 
 ```
 d(D z̄)/dτ  =  D (dz̄/dτ)  =  D ū_θ(z, τ)
 ```
 
-*The flow velocity of the GeoPhys motion field is the GeoPhys motion field of the flow
-velocity.* From that follows the headline metric, **geometric drift**:
-
-```
-ġ_σ(τ) = ⟨ ∇_z̄ φ_σ(z̄(τ)), ū_θ(z, τ) ⟩
-```
-
-`ġ_σ < 0` means this denoising step is making the trajectory **more** geometrically
-regular; `ġ_σ > 0` means it is **eroding** it — PhaseLock's erosion thesis stated per
-step and generalised past the first-order term. The gradient goes through the statistic
-only, never the transformer, so it is nearly free.
-
-**One caveat, enforced in the schema.** The identity gives `dr/dτ = u` only when the
-recorded signal *is* the ODE state, i.e. the pooled VAE latent. `x0_hat` and `velocity`
-look like they should qualify but do not — both depend on the network's output, so their
-τ-derivative drags in a Jacobian that is never formed. Hidden states are further removed
-still. Those all fall back to a finite-difference estimator, tagged `empirical` so the
-two are never averaged together.
+All of it is defined, derived and worked through in [docs/METHOD.md](docs/METHOD.md),
+including the two places the source material is unusable as literally written (`φ_perr` is
+underdetermined as stated; `arccos` loses half its precision exactly where a near-straight
+trajectory sits).
 
 ## Layout
 

@@ -6,7 +6,7 @@
 #   RESOLUTION=letterbox scripts/experiments/run_all.sh
 #   STAGES="A C" scripts/experiments/run_all.sh # only some tracks
 #
-# See docs/EXPERIMENTS.md for what each stage is and how long it takes.
+# See docs/RUNNING.md for what each stage is and how long it takes.
 #
 # Every stage is guarded rather than `set -e`: one broken stage must not cancel the others,
 # because the point of a long unattended run is to have *something* for every track by the
