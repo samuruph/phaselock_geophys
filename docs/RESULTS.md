@@ -15,7 +15,7 @@ filed under `<backend>/<dataset>/<stage>/` so the path carries the provenance.
 | §3 correctness gate | both of the above | — | LikePhys | inversion | **complete** |
 | §7 (secondary) | CogVideoX-5B-I2V | I2V, inversion | LikePhys, 100 pairs | inversion | in progress |
 | §7 (secondary) | CogVideoX-5B-I2V | I2V, generation | LikePhys | generation | in progress |
-| §7 (secondary) | Wan2.1-T2V-1.3B | T2V, inversion | IntPhys2, 100 pairs | inversion | in progress |
+| §5.4 held-out check | Wan2.1-T2V-1.3B | T2V, inversion | IntPhys2, 100 pairs | inversion | **complete** |
 
 The n=100 numbers in §4 come from `20260810_1107_n100_native`. Its `φ_energy`, `φ_momentum`
 and `φ_jerk` columns were rebuilt from that run's saved trajectories with
@@ -461,6 +461,35 @@ features encode as "energy" is not what DINOv2's do.
 The number is left unflipped throughout. The flip was identified after seeing the result,
 on the same run it would be evaluated on, which is exactly the selection error §2 warns
 about. Confirming it needs a held-out dataset — IntPhys2 is the obvious test.
+
+**IntPhys2 ran, and it says do not flip it.** Same backend, same statistics, 100 pairs
+(`wan21_t2v_1_3b/intphys2/inversion`):
+
+| source | φ_perr | φ_accel | φ_jerk | φ_mom | φ_curv | φ_ang | φ_speed | φ_energy |
+|---|---|---|---|---|---|---|---|---|
+| DiT hidden states | 51.3 | 46.0 | 45.0 | 44.1 | 42.8 | 44.0 | 54.4 | **55.0** |
+| VAE latent | 55.8 | 47.5 | 48.0 | 42.6 | 43.1 | 42.9 | 53.9 | 55.5 |
+| flow velocity | 49.0 | 47.2 | 47.1 | 40.6 | 43.7 | 46.1 | 56.9 | **57.1** |
+| clean estimate | 52.0 | 46.2 | 47.6 | 39.1 | 41.4 | 49.6 | 55.9 | 56.7 |
+| DINOv2-large | 50.8 | 48.5 | 47.6 | 46.1 | 46.0 | 48.1 | 47.1 | 45.6 |
+
+`φ_energy` is **above** chance here, 55–57%, in the same four readouts where it was 20
+points below on LikePhys. The sign is therefore not a property of the statistic or of the
+representation — it is a property of **how LikePhys builds its violated clips**, which
+edit motion toward something uniform. Flipping the sign would have converted a 55% signal
+into a 45% one on the held-out set. The rule stands as written.
+
+Two other things this table says, both worth stating plainly:
+
+**The LikePhys result does not transfer.** Nothing here clears 57%, against 75.3% on
+LikePhys. That is not a contradiction — IntPhys2 is a much harder benchmark, and the
+published numbers agree (V-JEPA 2 at 57.5%, GeoPhys at 59.5%, human 96.4%). But it means
+§4's headline is a LikePhys result, not a general one, and §7 should be read accordingly.
+
+**DINOv2 and the internals fail differently.** The internal sources retain a weak but
+consistent `φ_speed`/`φ_energy` signal (54–57%) that DINOv2 does not have at all
+(45–47%). It is small, but it is the same ordering as LikePhys: what survives is carried
+by the diffusion model, not by the frozen encoder.
 
 ### 5.5 Where it works and where it fails
 
