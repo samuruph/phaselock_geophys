@@ -169,12 +169,71 @@ velocity.* Three metrics follow, all free because `u_θ` is already evaluated.
 past the first-order term. The gradient goes through the statistic only, a `(T, D)`
 tensor, never through the transformer.
 
-**Transport alignment** `ρ_f = cos((D z̄)_f, (D ū)_f)` — is the step *growing* the motion
-already present or *rewriting* it? The exact first-order special case, and the quantity
-that maps one-to-one onto PhaseLock's latent delta.
+### The two coupling metrics, in words
 
-**Erosion rate** `‖D ū‖ / ‖D z̄‖` — how fast motion is restructured relative to how much
-exists.
+Both compare **two vectors that live in the same feature space**, one per pair of adjacent
+frames:
+
+```
+Δz̄_f = z̄_{f+1} − z̄_f      the motion the video has right now
+Δū_f = ū_{f+1} − ū_f       how this denoising step is changing that motion
+```
+
+`Δz̄` is the frame-to-frame movement of the pooled feature — GeoPhys's velocity, and
+exactly PhaseLock's latent delta operator when the source is the VAE latent. `Δū` is the
+same difference taken on the flow field, which by the commutation identity above *is* the
+rate of change of `Δz̄` under the sampler. So the two are directly comparable, and the
+question becomes what the model is doing to the motion it already has.
+
+**Transport alignment** — the *direction* of that change.
+
+```
+ρ_f = cos(Δz̄_f, Δū_f)
+```
+
+| `ρ_f` | what the step is doing to the motion at frame `f` |
+|---|---|
+| **+1** | pushing it in exactly the direction it already points — **amplifying** |
+| **0** | pushing it sideways — **turning** it without growing or shrinking it |
+| **−1** | pushing against it — **cancelling** the motion that is there |
+
+Reported twice: a plain mean over frames, and a mean weighted by `‖Δz̄_f‖`. The weighting
+matters because a nearly static frame has a tiny `Δz̄` whose direction is mostly noise, and
+an unweighted mean lets those frames count as much as the ones actually moving.
+
+**Erosion rate** — the *size* of that change, relative to the motion it acts on.
+
+```
+e_f = ‖Δū_f‖ / (‖Δz̄_f‖ + ε)
+```
+
+| `e_f` | reading |
+|---|---|
+| **≪ 1** | the step barely touches the motion; it is refining texture and leaving the dynamics alone |
+| **≈ 1** | the step changes the motion by as much as the motion itself — wholesale restructuring |
+| **≫ 1** | the step is dominated by rewriting motion rather than preserving it |
+
+Unsigned and unbounded above, where alignment is signed and bounded — so the pair
+separates *which way* the motion is being pushed from *how hard*.
+
+**Why this is the PhaseLock quantity.** PhaseLock's guidance forces `Δz̄` toward a motion
+prior taken from a few-step pass. Transport alignment is the cosine between that same
+`Δz̄` and what the model does to it unprompted, so it measures per step whether the model
+is already moving in the direction PhaseLock pushes — and erosion rate says how strongly.
+PhaseLock's thesis is that late refinement erodes the motion prior; these two are that
+claim written as a measurement.
+
+**Why only the VAE latent has them.** Both compare the *state's* motion against the flow
+acting on that state, and only the pooled latent is the ODE state. For hidden states,
+`x0_hat` or `velocity` there is no exact flow acting on them — getting one would need a
+Jacobian of the transformer that is never formed — so the metrics are left uncomputed
+rather than approximated. This is why the source comparison shows `alignment` and
+`erosion` bars for `latent` alone.
+
+> **Measured outcome, so the expectation is set.** Both underperform the plain statistics
+> they derive from: 54.7% and 54.2% against a 52.8% shuffled-label floor, where `φ_perr`
+> on the same run reaches 72.1%. They are reported as a negative result rather than
+> dropped. See [RESULTS.md](RESULTS.md) §5.4.
 
 ### Which sources support the exact form
 
