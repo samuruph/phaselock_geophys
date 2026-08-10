@@ -215,6 +215,15 @@ def generation_report(run_dir: Path, figures: bool) -> None:
             print(f"\n  {produced.name}")
 
         statistics = load(run_dir / "statistics.csv")
+        if statistics:
+            from phaselock.analysis import signal_quality_correlation
+
+            # The plainest statement of what generation measures: signal against
+            # ground-truth quality, no rescaling, with the scatter beside it.
+            produced = signal_quality_correlation(
+                statistics, cells, directory / "02_signal_vs_quality.png")
+            if produced:
+                print(f"  {produced.name}")
         if ranked and statistics:
             for path in generation_figures(ranked, statistics, directory):
                 print(f"  {path.relative_to(directory)}")

@@ -320,3 +320,31 @@ def test_score_by_category_skips_categories_below_the_pair_floor():
               "step": "0", "phi_accel": "2.0"} for p in pairs]
     # 12 pairs spread over 12 scenarios is one each -- all below the floor.
     assert score_by_category(rows, pairs, key="scenario") == []
+
+
+def test_signal_quality_correlation_finds_the_predictive_signal(tmp_path):
+    """The plain question: does the statistic track how good the generation was?"""
+    from phaselock.analysis.figures import signal_quality_correlation
+
+    fidelity = {f"c{i}": 1.0 - 0.15 * i for i in range(6)}
+    statistics, candidates = [], []
+    for sample, score in fidelity.items():
+        statistics.append({
+            "sample_id": sample, "source": "hidden_states", "block": "3", "step": "0",
+            "phi_accel": str(1.0 - score),   # tracks quality inversely
+            "phi_curv": "2.0",               # flat, no signal
+        })
+        candidates.append({"sample_id": sample, "raw_score": str(score),
+                           "spatial_iou": str(score)})
+    path = signal_quality_correlation(statistics, candidates, tmp_path / "q.png")
+    assert path is not None and path.is_file()
+
+
+def test_signal_quality_correlation_needs_three_clips(tmp_path):
+    """A rank correlation over two points is not a measurement."""
+    from phaselock.analysis.figures import signal_quality_correlation
+
+    statistics = [{"sample_id": "a", "source": "latent", "block": "-1", "step": "0",
+                   "phi_accel": "1.0"}]
+    assert signal_quality_correlation(
+        statistics, [{"sample_id": "a", "raw_score": "0.5"}], tmp_path / "q.png") is None

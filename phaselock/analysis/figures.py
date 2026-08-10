@@ -1118,3 +1118,128 @@ def category_table(
     figure.savefig(path, bbox_inches="tight", dpi=140)
     plt.close(figure)
     return path
+
+
+QUALITY_METRICS = (
+    ("raw_score", "PhysicsIQ score"),
+    ("spatial_iou", "Spatial IoU"),
+    ("spatiotemporal_iou", "Spatiotemporal IoU"),
+    ("weighted_spatial_iou", "Weighted spatial IoU"),
+    ("mse", "MSE  (lower is better)"),
+)
+
+
+def signal_quality_correlation(
+    statistics: Sequence[dict],
+    candidates: Sequence[dict],
+    path: Path,
+    top: int = 6,
+) -> Optional[Path]:
+    """Does a signal predict how good the generation turned out?
+
+    The plain version of the question, with no rescaling. Left: the Spearman correlation
+    of every ``(source, statistic)`` against each ground-truth quality metric, so a bar
+    reaching left means "larger statistic, worse generation" -- the direction a working
+    detector should point, since every statistic is oriented so larger means less regular.
+    Right: the actual scatter for the strongest signals, because a correlation coefficient
+    hides whether the relationship is real or one outlier.
+
+    Reading rho directly avoids the mapping that made this confusing: it is a correlation
+    between two numbers per clip, not an accuracy, and nothing is being counted.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..experiments.generation import spearman
+
+    fidelity = {
+        column: {r["sample_id"]: float(r[column]) for r in candidates
+                 if r.get(column) not in (None, "")}
+        for column, _ in QUALITY_METRICS
+    }
+    fidelity = {k: v for k, v in fidelity.items() if len(v) >= 3}
+    if not fidelity:
+        return None
+
+    # One value per clip per (source, statistic): the mean over the probe grid, matching
+    # how every other figure summarises depth and denoising time.
+    pooled: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for row in statistics:
+        for name in ("speed", "curv", "ang", "accel", "perr"):
+            value = row.get(f"phi_{name}")
+            if value not in (None, ""):
+                pooled[(row["source"], name)][row["sample_id"]].append(float(value))
+    if not pooled:
+        return None
+    per_signal = {k: {s: float(np.mean(v)) for s, v in d.items()} for k, d in pooled.items()}
+
+    columns = [c for c, _ in QUALITY_METRICS if c in fidelity]
+    labels = dict(QUALITY_METRICS)
+    keys = sorted(per_signal)
+    grid = np.full((len(keys), len(columns)), np.nan)
+    for r, key in enumerate(keys):
+        for c, column in enumerate(columns):
+            shared = sorted(set(per_signal[key]) & set(fidelity[column]))
+            if len(shared) >= 3:
+                grid[r, c] = spearman([per_signal[key][s] for s in shared],
+                                      [fidelity[column][s] for s in shared])
+
+    figure = plt.figure(figsize=(15.5, 0.42 * len(keys) + 4.6))
+    grid_spec = figure.add_gridspec(2, max(top, 3), height_ratios=[len(keys) * 0.30, 3.4],
+                                    hspace=0.55)
+    axis = figure.add_subplot(grid_spec[0, :])
+
+    width = 0.8 / len(columns)
+    positions = np.arange(len(keys))
+    for index, column in enumerate(columns):
+        offset = (index - (len(columns) - 1) / 2) * width
+        axis.barh(positions + offset, grid[:, index], height=width * 0.9,
+                  color=palette.CATEGORICAL[index % len(palette.CATEGORICAL)],
+                  label=labels[column])
+    axis.axvline(0, color=palette.TEXT_MUTED, linewidth=1.1)
+    axis.set_yticks(positions,
+                    [f"{palette.source_label(s)} · {palette.statistic_plain(n)}"
+                     for s, n in keys], fontsize=7.5)
+    axis.invert_yaxis()
+    axis.set_xlabel("Spearman correlation with generation quality"
+                    "        <-- larger statistic, worse generation")
+    axis.set_title("Do the signals predict how good the generation is?", loc="left")
+    axis.legend(fontsize=7.5, ncol=len(columns), loc="upper center",
+                bbox_to_anchor=(0.5, -0.16))
+    axis.grid(axis="y", visible=False)
+
+    # The scatters. A coefficient cannot tell you whether the trend is real.
+    reference = "raw_score" if "raw_score" in fidelity else columns[0]
+    strongest = sorted(
+        range(len(keys)),
+        key=lambda r: -abs(grid[r, columns.index(reference)])
+        if not np.isnan(grid[r, columns.index(reference)]) else 0,
+    )[:top]
+    for slot, r in enumerate(strongest):
+        panel = figure.add_subplot(grid_spec[1, slot])
+        source, name = keys[r]
+        shared = sorted(set(per_signal[keys[r]]) & set(fidelity[reference]))
+        panel.scatter([per_signal[keys[r]][s] for s in shared],
+                      [fidelity[reference][s] for s in shared],
+                      s=22, color=palette.STATISTIC_COLOURS.get(name, palette.PRIMARY),
+                      alpha=0.85, edgecolors="none")
+        rho = grid[r, columns.index(reference)]
+        panel.set_title(f"{palette.source_label(source)}\n{palette.statistic_plain(name)}"
+                        f"   $\\rho$={rho:+.2f}", fontsize=7.5)
+        panel.set_xlabel("statistic", fontsize=7)
+        if slot == 0:
+            panel.set_ylabel(labels[reference], fontsize=7.5)
+        panel.tick_params(labelsize=6.5)
+
+    palette.caption(figure, (
+        f"One point per generated clip: the statistic (averaged over the probe grid) "
+        f"against ground-truth {labels[reference].lower()}. Negative rho is the useful "
+        f"direction -- every statistic is oriented so larger means less regular, so a "
+        f"working signal should fall as quality rises. This is a correlation between two "
+        f"numbers per clip, not an accuracy: nothing is being counted."
+    ))
+    figure.tight_layout(rect=(0, 0.05, 1, 1))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, bbox_inches="tight", dpi=130)
+    plt.close(figure)
+    return path
