@@ -115,7 +115,13 @@ def test_signal_inventory_matches_what_the_code_emits():
 
 def test_signal_inventory_arithmetic_is_right():
     """The worked example must actually add up, or it teaches the wrong thing."""
-    blocks, steps, phi_quantities, drift_quantities = 30, 10, 7, 5
+    # Derived from the code so the doc cannot drift from it: phi carries every statistic
+    # plus the two ensembles, drift one per statistic.
+    from phaselock.metrics.geophys import STATISTICS
+
+    blocks, steps = 30, 10
+    phi_quantities = len(STATISTICS) + 2
+    drift_quantities = len(STATISTICS)
     total = (
         blocks * steps * phi_quantities              # hidden_states phi
         + blocks * (steps - 1) * drift_quantities    # hidden_states drift, empirical
@@ -125,8 +131,8 @@ def test_signal_inventory_arithmetic_is_right():
         + 2 * (steps * phi_quantities                # x0_hat, velocity phi
                + (steps - 1) * drift_quantities)     # ... and their empirical drift
     )
-    assert total == 3820
-    assert "**3820**" in (ROOT / "docs/METHOD.md").read_text()
+    assert total == 5704
+    assert "**5704**" in (ROOT / "docs/METHOD.md").read_text()
 
 
 def test_code_anchors_in_the_docs_point_at_what_they_claim():

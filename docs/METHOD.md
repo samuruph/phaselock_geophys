@@ -347,36 +347,36 @@ one vector per latent frame. A raw hidden state is ~100 MB; pooled it is ~64 KB.
 | `phi` | `ang` | `std({θ_t})` | how *inconsistently* it turns |
 | `phi` | `accel` | `mean({‖a_t‖²})` | abrupt changes of motion |
 | `phi` | `perr` | `mean({‖ε_t‖})` | how much the clip surprises a predictor of its own past |
-| `phi` | `energy` | `std({E_t}) / mean({E_t})`, `E_t = ½‖v_t‖²` | how unevenly kinetic energy is spread over the clip |
+| `phi` | `energy` | `std({E_t}) / mean({E_t})`, `E_t = ½‖v_t‖²` | **a documented control, not a detector.** Measured to be a scale ratio: numerator at chance, denominator a strong detector, so it inverts mechanically. See RESULTS §4 |
 | `phi` | `momentum` | `1 − ‖Σ v_t‖ / Σ‖v_t‖` | how little of the path went anywhere — 0 for a straight line, 1 for a round trip |
 | `phi` | `jerk` | `mean({‖j_t‖²})`, `j_t` the third difference | impulsive events: a teleport or a freeze is a discontinuity in acceleration |
-| `phi` | `or` | `argmax_b │z_b│` over the five | ensemble: trust the most confident statistic |
-| `phi` | `majority` | `Σ_b z_b` over the five | ensemble: vote across all five |
+| `phi` | `or` | `argmax_b │z_b│` over the statistics | ensemble: trust the most confident statistic |
+| `phi` | `majority` | `Σ_b z_b` over the statistics | ensemble: vote across all of them |
 | `drift` | one per statistic | `ġ_σ = ⟨∇_z̄ φ_σ, ū_θ⟩` | is this denoising step *regularising* the trajectory (`<0`) or eroding it (`>0`)? |
 | `coupling` | `alignment` | `cos((Δz̄)_f, (Δū)_f)` | is the step growing the motion already there, or rewriting it? |
 | `coupling` | `erosion` | `‖Δū_f‖ / ‖Δz̄_f‖` | how fast motion is restructured relative to how much exists |
 
 `v_t`, `θ_t`, `a_t`, `ε_t` are the per-frame intermediates defined in §3. The two
-ensembles are GeoPhys's own; they combine the five `phi` statistics and so exist only for
+ensembles are GeoPhys's own; they combine the `phi` statistics and so exist only for
 `kind = phi`.
 
 ### Where the count comes from
 
 For a Wan run with 30 blocks and 10 recorded steps — the exact composition of the
-**3820** signals in `signals.csv`:
+**5704** signals in `signals.csv`. Eight statistics plus the two ensembles:
 
 | source | kind | cells | × quantities | signals | why this many cells |
 |---|---|---|---|---|---|
-| `hidden_states` | `phi` | 30 × 10 = 300 | 7 | **2100** | every block, every step |
-| `hidden_states` | `drift` | 30 × 9 = 270 | 5 | **1350** | 9, not 10: an *empirical* drift is a finite difference and needs the next step, so the last one has no successor |
-| `latent` | `phi` | 1 × 10 = 10 | 7 | 70 | not per-block |
-| `latent` | `drift` | 1 × 10 = 10 | 5 | 50 | 10, not 9: **exact** drift is an analytic gradient and needs no successor |
+| `hidden_states` | `phi` | 30 × 10 = 300 | 10 | **3000** | every block, every step |
+| `hidden_states` | `drift` | 30 × 9 = 270 | 8 | **2160** | 9, not 10: an *empirical* drift is a finite difference and needs the next step, so the last one has no successor |
+| `latent` | `phi` | 1 × 10 = 10 | 10 | 100 | not per-block |
+| `latent` | `drift` | 1 × 10 = 10 | 8 | 80 | 10, not 9: **exact** drift is an analytic gradient and needs no successor |
 | `latent` | `coupling` | 1 × 10 = 10 | 2 | 20 | only the ODE state gets coupling metrics |
-| `x0_hat` | `phi` | 10 | 7 | 70 | |
-| `x0_hat` | `drift` | 9 | 5 | 45 | empirical |
-| `velocity` | `phi` | 10 | 7 | 70 | |
-| `velocity` | `drift` | 9 | 5 | 45 | empirical |
-| | | | | **3820** | |
+| `x0_hat` | `phi` | 10 | 10 | 100 | |
+| `x0_hat` | `drift` | 9 | 8 | 72 | empirical |
+| `velocity` | `phi` | 10 | 10 | 100 | |
+| `velocity` | `drift` | 9 | 8 | 72 | empirical |
+| | | | | **5704** | |
 
 Two asymmetries in that table are the exact/empirical distinction made concrete, and both
 are worth noticing:

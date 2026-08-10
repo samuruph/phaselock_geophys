@@ -45,7 +45,7 @@ when the maths changes, **RESULTS** on every run.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 365 tests, CPU only, no weights needed
+python -m pytest tests/ -q          # 375 tests, CPU only, no weights needed
 ```
 
 ## What is measured
@@ -150,7 +150,7 @@ Extraction is resumable — clips already in `statistics.csv` are skipped.
 
 ## Status
 
-The library and all six drivers are implemented and covered by 365 CPU tests.
+The library and all six drivers are implemented and covered by 375 CPU tests.
 
 **Stage 5 detection has completed** on LikePhys with Wan2.1-T2V-1.3B: 173 clips, 96 matched
 pairs, 3800 scored signals, 50-step inversion, no PhaseLock guidance. The correctness gate

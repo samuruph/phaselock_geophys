@@ -249,3 +249,4 @@ def test_energy_is_scale_free():
     assert float(geophys_statistics(z)["energy"]) == pytest.approx(
         float(geophys_statistics(z * 1000)["energy"]), rel=1e-4
     )
+

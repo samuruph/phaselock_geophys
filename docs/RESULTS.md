@@ -164,6 +164,34 @@ further in feature space because a violation is an abrupt event, or because the 
 created them changed the clips in some visually trivial way. Separating those needs a
 control this run does not have.
 
+### 4b bis. Energy continuity was tested properly, and does not work
+
+The natural repair for `φ_energy` is to stop dividing by the mean and ask instead whether
+the energy is *continuous* — real motion changes its energy through discrete events (an
+impact, a bounce), and editing physics away should smooth them out. Eighteen candidates
+were scored on LikePhys and rescored on IntPhys2 without refitting
+(`scripts/candidate_statistics.py`), covering spreads, crest factors, autocorrelation,
+total variation, local relative jumps, second differences and burst counts.
+
+**Nothing survives.** Every candidate that is far from chance on LikePhys lands at chance
+on IntPhys2 or flips sign, including `mean(‖v_t‖)` itself (73.8 → 46.4). The best
+order-sensitive candidate, `1 − autocorr(E)`, is 52.5 and 50.2.
+
+One candidate looked like the exception and was not. A **burst fraction** — the share of
+frames whose `|ΔE|` exceeds twice the clip's median — read 39.5% on LikePhys and 38.9% on
+IntPhys2: far from chance, same sign, same size, on two unrelated datasets. It was an
+artefact of the scoring rule. A fraction over twelve frames takes about six distinct
+values, so it **ties on 22% of LikePhys pairs and 30% of IntPhys2 pairs**, and `violated >
+plausible` counts a tie as a miss. Excluding ties it is 50.6% and 55.8% — nothing.
+
+Two things follow. The tool now reports the tie rate and the tie-excluded accuracy in
+every row, because that artefact is invisible in the headline number and points the wrong
+way by construction. And the production statistics are unaffected: all eight are
+continuous functions of the trajectory and tie at a rate of 0%.
+
+So `φ_energy` is left as it is — a documented control that shows what a scale ratio looks
+like — rather than replaced by something that only appears to work.
+
 ### 4c. Where along the denoising trajectory the signal lives
 
 Accuracy on hidden states, meaned over all 30 blocks, by recorded step. `t = 0` is the
