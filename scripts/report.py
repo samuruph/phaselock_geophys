@@ -270,9 +270,12 @@ def generation_figures(ranked, statistics, directory):
         value_label="concordance with ground-truth fidelity (%)",
         title="Which signal predicts a faithful generation?",
         formula=(
-            r"concordance $= \frac{1-\rho}{2}\times 100$" "\n"
-            r"$\rho$ = Spearman($\varphi_\sigma$, fidelity) over clips" "\n"
-            "50% = chance,  100% = the statistic perfectly\nranks generations worst-first"
+            r"per probe cell:  $\rho$ = Spearman$\left(\varphi_\sigma^{\,(b,s)},"
+            r"\ \mathrm{raw\_score}\right)$ over clips" "\n"
+            r"concordance $=\frac{1-\rho}{2}\times 100$,   bar = mean over all cells"
+            "\n"
+            r"raw_score $=\Sigma\,$IoU$\,-\,$MSE  vs the real continuation" "\n"
+            "50% = chance.  Correlation, not an accuracy: nothing is counted."
         ),
     )
 

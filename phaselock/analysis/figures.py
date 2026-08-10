@@ -1203,7 +1203,11 @@ def signal_quality_correlation(
     axis.invert_yaxis()
     axis.set_xlabel("Spearman correlation with generation quality"
                     "        <-- larger statistic, worse generation")
-    axis.set_title("Do the signals predict how good the generation is?", loc="left")
+    axis.set_title(
+        "Do the signals predict how good the generation is?\n"
+        "signal averaged over the probe grid first, then correlated  "
+        "(figure 01 does the reverse: correlate per cell, then average)",
+        loc="left", fontsize=11)
     axis.legend(fontsize=7.5, ncol=len(columns), loc="upper center",
                 bbox_to_anchor=(0.5, -0.16))
     axis.grid(axis="y", visible=False)
