@@ -47,7 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kind", default="phi", choices=["phi", "drift"])
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--figures", action="store_true", help="also write PNG heatmaps")
-    parser.add_argument("--category", default="scenario", choices=["scenario", "violation"],
+    parser.add_argument("--category", default="family",
+                        choices=["family", "scenario", "violation"],
                         help="grouping for the per-category breakdown")
     return parser.parse_args()
 

@@ -702,7 +702,7 @@ class CategoryCell:
 def score_by_category(
     rows: Sequence[dict[str, Any]],
     pairs: Sequence[VideoPair],
-    key: str = "scenario",
+    key: str = "family",
     kind: str = "phi",
     min_pairs: int = MIN_SCORABLE_PAIRS,
 ) -> list[CategoryCell]:
@@ -719,14 +719,20 @@ def score_by_category(
     against.
 
     Args:
-        key: ``"scenario"`` (12 groups on LikePhys) or ``"violation"`` (56, mostly with
-            too few pairs each to mean anything).
+        key: ``"family"`` (4 physics families -- the default, and the only one that
+            survives a small balanced draw), ``"scenario"`` (12), or ``"violation"``
+            (56, mostly with too few pairs each to mean anything).
     """
     import statistics as stats_module
 
     grouped: dict[str, list[VideoPair]] = defaultdict(list)
     for pair in pairs:
-        grouped[getattr(pair, key)].append(pair)
+        if key == "family":
+            from ..datasets.likephys import family_of
+
+            grouped[family_of(pair.scenario)].append(pair)
+        else:
+            grouped[getattr(pair, key)].append(pair)
 
     cells: list[CategoryCell] = []
     for category, subset in sorted(grouped.items()):

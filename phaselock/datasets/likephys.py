@@ -49,6 +49,35 @@ SCENARIO_PROMPTS: dict[str, str] = {
 }
 
 
+SCENARIO_FAMILY = {
+    "ball_collision": "rigid body",
+    "ball_drop": "rigid body",
+    "block_slide": "rigid body",
+    "pendulum": "rigid body",
+    "pyramid": "rigid body",
+    "cloth_drape": "soft body",
+    "flag": "soft body",
+    "faucet": "fluid",
+    "fluid": "fluid",
+    "river": "fluid",
+    "shadow": "optical",
+    "shadow_camera": "optical",
+}
+"""The twelve scenarios grouped by the kind of physics being violated.
+
+Coarser than the scenario and finer than the whole benchmark, which is the granularity a
+result is usually about: the n=96 run found the geometry near-perfect on rigid bodies and
+at chance on `river`, and that is a statement about fluids, not about one scene. It also
+survives a small run -- twelve balanced pairs give one clip per scenario but two to five
+per family, which is above the floor where a pairwise accuracy means anything.
+"""
+
+
+def family_of(scenario: str) -> str:
+    """Physics family for a scenario, or the scenario itself if it is not one of the twelve."""
+    return SCENARIO_FAMILY.get(scenario, scenario)
+
+
 class LikePhys(PairedVideoDataset):
     """The LikePhys benchmark, paired from its directory layout."""
 
