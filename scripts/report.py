@@ -204,6 +204,11 @@ def generation_figures(ranked, statistics, directory):
         steps_to_timestep=steps, statistics_rows=statistics,
         value_label="concordance with ground-truth fidelity (%)",
         title="Which signal predicts a faithful generation?",
+        formula=(
+            r"concordance $= \frac{1-\rho}{2}\times 100$" "\n"
+            r"$\rho$ = Spearman($\varphi_\sigma$, fidelity) over clips" "\n"
+            "50% = chance,  100% = the statistic perfectly\nranks generations worst-first"
+        ),
     )
 
 

@@ -43,9 +43,15 @@ def test_every_config_key_is_documented():
 
 def test_no_config_key_is_dead():
     """A key declared but never read would silently do nothing when set."""
+    # Shell runners count: they are the surface that actually sets most of these on a
+    # real run, and a key used only there is not dead.
     sources = "\n".join(
         path.read_text()
-        for path in list((ROOT / "phaselock").rglob("*.py")) + list((ROOT / "scripts").glob("*.py"))
+        for path in (
+            list((ROOT / "phaselock").rglob("*.py"))
+            + list((ROOT / "scripts").rglob("*.py"))
+            + list((ROOT / "scripts").rglob("*.sh"))
+        )
         if path.name != "config.py"
     )
     hints = typing.get_type_hints(Config)
@@ -53,7 +59,9 @@ def test_no_config_key_is_dead():
         f"{section.name}.{field.name}"
         for section in dataclasses.fields(Config)
         for field in dataclasses.fields(hints[section.name])
-        if not re.search(rf"\b{field.name}\b", sources)
+        # Either a bare attribute access, or the `section__key` override form the
+        # runners use -- `output__run_id` has no word boundary before the key.
+        if not re.search(rf"(\b|__){field.name}\b", sources)
     ]
     assert not dead, f"config keys declared but never read: {dead}"
 
@@ -142,3 +150,11 @@ def test_code_anchors_in_the_docs_point_at_what_they_claim():
             if f"def {label}" not in found:
                 wrong.append(f"{doc.name}: {relative}#L{line} claims {label}, found {found.strip()[:50]!r}")
     assert not wrong, "stale anchors:\n" + "\n".join(wrong)
+
+
+def test_every_long_driver_reports_progress():
+    """A stage is hours long; a bar is the difference between 'running' and 'when'."""
+    for name in ("run_inversion", "run_external", "run_generation", "run_step_sweep"):
+        source = (ROOT / "scripts" / f"{name}.py").read_text()
+        assert "from phaselock.progress import track" in source, name
+        assert "track(" in source, name

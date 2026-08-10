@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Must run before torch is imported: a system CUDA install ahead of torch's bundled
 # libraries on LD_LIBRARY_PATH aborts the process inside the VAE encode.
+from phaselock.progress import track
 from phaselock.runtime import prepare
 
 prepare()
@@ -134,7 +135,7 @@ def write_visuals(config, pairs, output: Path) -> None:
         torch_dtype=resolve_dtype(config.backend.dtype), enable_offload=config.backend.offload,
     )
     directory = config.output.dir("visuals")
-    for index, pair in enumerate(pairs, start=1):
+    for index, pair in enumerate(track(pairs, 'visuals', unit='pair'), start=1):
         for path in save_visuals(backend, pair, config, directory):
             logger.info("[%d/%d] wrote %s", index, len(pairs), path.name)
 
@@ -170,7 +171,7 @@ def extract(config, pairs, statistics_path, output) -> None:
         )
         (output / "reconstruction.json").write_text(json.dumps(scores, indent=2))
 
-    for index, (sample, pair) in enumerate(todo, start=1):
+    for index, (sample, pair) in enumerate(track(todo, 'inverting'), start=1):
         rows = extract_sample(backend, sample, pair, config, trajectory_dir)
         written = write_rows(rows, statistics_path)
         logger.info("[%d/%d] %s -> %d rows", index, len(todo), sample.sample_id, written)

@@ -35,6 +35,7 @@ from phaselock.datasets import LikePhys
 from phaselock.experiments.generation import best_of_n, generate_candidate
 from phaselock.experiments.detection import statistics_from_record
 from phaselock.experiments.generation import score_against_fidelity
+from phaselock.progress import track
 from phaselock.metrics.geophys import geophys_statistics
 from phaselock.probes import StatisticRow
 from phaselock.probes import LATENT
@@ -114,7 +115,7 @@ def main() -> None:
     )
 
     rows, selection, statistics = [], [], []
-    for index, clip in enumerate(clips, start=1):
+    for index, clip in enumerate(track(clips, 'generating'), start=1):
         candidates = [
             generate_candidate(
                 backend, clip, dataset, config,

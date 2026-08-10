@@ -49,6 +49,7 @@ from phaselock.experiments.step_sweep import (
     blur_survival,
     measure_cell,
 )
+from phaselock.progress import track
 from phaselock.metrics.geophys import STATISTICS
 from phaselock.pipelines.generation import generate_with_probes
 from phaselock.utils import resolve_dtype
@@ -95,7 +96,7 @@ def main() -> None:
     encoder = DINOv2Encoder(model_id=args.encoder, layer=args.layer)
 
     cells: list[SweepCell] = []
-    for index, clip in enumerate(clips, start=1):
+    for index, clip in enumerate(track(clips, 'step sweep'), start=1):
         from PIL import Image
 
         reference = reference_continuation(clip, backend, config=config)

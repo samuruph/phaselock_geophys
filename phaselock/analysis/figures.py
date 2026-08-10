@@ -58,6 +58,7 @@ def source_comparison(
     temporal_ratio: int = 4,
     value_label: str = "pairwise detection accuracy (%)",
     title: str = "Internal representations vs the external DINOv2 baseline",
+    formula: str = "",
 ) -> Optional[Path]:
     """Mean accuracy per (source, statistic) across the whole probe grid.
 
@@ -154,6 +155,7 @@ def source_comparison(
     axis.set_ylabel(value_label)
     axis.set_title(title)
 
+
     # Two legends. Colour says *which statistic*; the glyphs say *what a mark means*, and
     # without naming them the vertical whisker reads as an error bar or a noise floor when
     # it is neither -- it is the spread of accuracy across probe cells.
@@ -204,8 +206,19 @@ def source_comparison(
             f"best cell needs {100 * null.null_p95:.0f}% (dashed line) because a maximum selects "
             "for noise while a mean cancels it."
         )
+    # A derived quantity needs its definition visible. Generation reports a rank
+    # concordance, not an accuracy, and the axis label alone cannot carry that. Placed
+    # outside the axes: inside, it lands on the diamonds.
+    if formula:
+        figure.text(
+            0.99, 0.995, formula, ha="right", va="top", fontsize=8.5,
+            color=palette.TEXT_SECONDARY, linespacing=1.5,
+            bbox=dict(boxstyle="round,pad=0.5", facecolor=palette.SURFACE,
+                      edgecolor=palette.GRID, linewidth=0.9),
+        )
+
     palette.caption(figure, note)
-    figure.tight_layout(rect=(0, 0.22, 1, 1))
+    figure.tight_layout(rect=(0, 0.22, 1, 0.90 if formula else 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path
@@ -946,6 +959,7 @@ def render_all(
     temporal_ratio: int = 4,
     value_label: str = "pairwise detection accuracy (%)",
     title: str = "Internal representations vs the external DINOv2 baseline",
+    formula: str = "",
 ) -> list[Path]:
     """Render the whole figure set.
 
@@ -966,7 +980,7 @@ def render_all(
         add(source_comparison(summaries, directory / "01_source_comparison.png",
                               external=external_summaries, null=null,
                               external_pooling=external_pooling, temporal_ratio=temporal_ratio,
-                              value_label=value_label, title=title))
+                              value_label=value_label, title=title, formula=formula))
     if external_summaries:
         add(external_comparison(external_summaries, directory / "02_external_baseline.png",
                                 pooling=external_pooling, temporal_ratio=temporal_ratio))

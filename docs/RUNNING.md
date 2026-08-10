@@ -60,7 +60,7 @@ noise you cannot distinguish from signal.
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 338 tests, CPU only, no weights, ~2 s
+python -m pytest tests/ -q          # 345 tests, CPU only, no weights, ~2 s
 ```
 
 **Data** (paths are the defaults; override with `data__root=...`):
@@ -120,7 +120,8 @@ output can be traced back to the exact settings.
 | `metrics` | `ar_order`, `residual_fit`, `ridge_lambda`, `bootstrap_resamples` | statistic options |
 | `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed` | sampling |
 | | `negative_prompt` | passed through to the pipeline; `null` by default |
-| `output` | `root`, `name` | artefacts land in `{root}/{backend}/{dataset}/{name}/` |
+| `output` | `root`, `run_id`, `name` | artefacts land in `{root}/{run_id}/{backend}/{dataset}/{name}/` |
+| | `run_id` | one label for a whole invocation, e.g. `20260810_1030_n100`, so an experiment's five tracks sit together and a later run cannot overwrite an earlier one. Set once per chain by `scripts/experiments/run_all.sh`, never per stage |
 
 `limit` is a **balanced** draw across scenarios, not the first N — the first 60 LikePhys
 pairs are all `ball_collision`, so a pilot using them would measure one kind of physics.

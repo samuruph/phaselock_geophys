@@ -144,6 +144,18 @@ class OutputConfig:
     """
 
     root: str = "/data/experiments/phaselock_geophys"
+    run_id: str = ""
+    """A label for the whole invocation, e.g. ``20260810_1030_n100``.
+
+    Inserted between ``root`` and the backend segment, so one experiment's five tracks sit
+    together under one folder and a later run cannot overwrite or silently append to an
+    earlier one. Empty keeps the old flat layout.
+
+    **Set it once per chain, not per stage.** Every stage of a run must share the same
+    value or the gate lands somewhere the report cannot find it; the runner script
+    computes it once and passes it to each command. That is also why it does not default
+    to a timestamp: a default evaluated per process would give each stage its own."""
+
     name: str = "run"
     backend: str = ""
     dataset: str = ""
@@ -157,9 +169,9 @@ class OutputConfig:
         return path
 
     def base(self) -> Path:
-        """The run directory, with the backend and dataset segments when known."""
+        """The run directory: ``root / run_id / backend / dataset / name``."""
         path = Path(self.root)
-        for segment in (self.backend, self.dataset):
+        for segment in (self.run_id, self.backend, self.dataset):
             if segment:
                 path = path / segment
         return path / self.name

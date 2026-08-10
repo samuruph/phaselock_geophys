@@ -35,6 +35,7 @@ from phaselock.datasets import get_paired_dataset
 from phaselock.encoders import DINOv2Encoder
 from phaselock.experiments.detection import unique_samples
 from phaselock.experiments.external import encode_sample, score_external
+from phaselock.progress import track
 from phaselock.metrics.geophys import STATISTICS
 
 logger = logging.getLogger("run_external")
@@ -86,7 +87,7 @@ def main() -> None:
                 args.frames or 0, args.image_size)
 
     rows = []
-    for index, (sample, pair) in enumerate(samples, start=1):
+    for index, (sample, pair) in enumerate(track(samples, 'encoding'), start=1):
         rows.extend(encode_sample(encoder, sample, pair, config, layers=args.layers,
                                   num_frames=args.frames, temporal_pool=args.temporal_pool))
         if index % 20 == 0 or index == len(samples):

@@ -30,11 +30,12 @@ carry the signal at all.
 
 ## Documentation
 
-Four documents, and they do not overlap. Pick by the question you have:
+Five documents, and they do not overlap. Pick by the question you have:
 
 | your question | document |
 |---|---|
-| *"How do I run this?"* | **[docs/RUNNING.md](docs/RUNNING.md)** — **start here.** Exact commands per stage, what each reads and writes, CSV schemas, the output tree, measured cost and storage, which sweeps matter. Operational only: no derivations, no findings. |
+| *"How do I just run everything?"* | **[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)** — the one-command path, the knobs, what it costs and what to check when it finishes. |
+| *"How does a single stage work?"* | **[docs/RUNNING.md](docs/RUNNING.md)** — **start here.** Exact commands per stage, what each reads and writes, CSV schemas, the output tree, measured cost and storage, which sweeps matter. Operational only: no derivations, no findings. |
 | *"What is being measured, and how exactly?"* | **[docs/METHOD.md](docs/METHOD.md)** — every signal defined and derived, step-by-step computation for each, where the papers were ambiguous and what was chosen instead. Self-contained; the deep links into the code are a convenience, not a dependency. No numbers from any run. |
 | *"What did we find?"* | **[docs/RESULTS.md](docs/RESULTS.md)** — the measured numbers, which model and dataset produced each, what they mean, and what should not yet be believed. Every claim is tagged with its backend. |
 | *"Does any of this actually work?"* | **[docs/VALIDATION.md](docs/VALIDATION.md)** — the GPU bring-up ladder and its recorded outcome, including the four real bugs only a GPU run could surface. A log, kept because the failures are the useful part. |
@@ -46,7 +47,7 @@ the maths changes, **RESULTS** on every run, and **VALIDATION** never — it is 
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q          # 338 tests, CPU only, no weights needed
+python -m pytest tests/ -q          # 345 tests, CPU only, no weights needed
 ```
 
 ## The five statistics
@@ -194,7 +195,7 @@ Extraction is resumable — clips already in `statistics.csv` are skipped.
 
 ## Status
 
-The library and all six drivers are implemented and covered by 338 CPU tests.
+The library and all six drivers are implemented and covered by 345 CPU tests.
 
 **Stage 5 detection has completed** on LikePhys with Wan2.1-T2V-1.3B: 173 clips, 96 matched
 pairs, 3800 scored signals, 50-step inversion, no PhaseLock guidance. The correctness gate
