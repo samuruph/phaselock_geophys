@@ -377,3 +377,28 @@ def test_reconstruction_check_conditions_both_directions(latent_spec, target_lat
     assert backend.unconditioned == 0, (
         f"{backend.unconditioned} forward passes ran without the image channels"
     )
+
+
+def test_fixed_resolution_backend_ignores_the_configured_geometry():
+    """CogVideoX-5B-I2V raises on any geometry but its own.
+
+    RESOLUTION=native is set once for a whole multi-backend run, so a spec that cannot
+    honour it must ignore it rather than let the pipeline raise -- that took out three of
+    five stages at n=100. Both arms then stay matched at the native geometry, which is
+    the property the comparison needs.
+    """
+    from dataclasses import replace
+
+    from phaselock.backends.cogvideox import COGVIDEOX_5B
+    from phaselock.backends.wan import WAN21_T2V_1_3B
+    from phaselock.config import Config, DataConfig
+    from phaselock.experiments.detection import frame_geometry
+
+    config = Config(data=DataConfig(height=512, width=512))
+
+    assert frame_geometry(COGVIDEOX_5B, config)[1:] == (480, 720)
+    assert frame_geometry(WAN21_T2V_1_3B, config)[1:] == (512, 512)
+    # And a backend that can honour it still falls back when nothing is configured.
+    assert frame_geometry(WAN21_T2V_1_3B, Config())[1:] == (
+        WAN21_T2V_1_3B.default_height, WAN21_T2V_1_3B.default_width
+    )

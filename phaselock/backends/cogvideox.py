@@ -32,6 +32,9 @@ COGVIDEOX_5B = LatentSpec(
     default_fps=8,
     default_height=480,
     default_width=720,
+    # Not a preference. diffusers' CogVideoXPatchEmbed raises on any other geometry for
+    # the 5B-I2V checkpoint, so data.height/width has to be ignored here or the run dies.
+    fixed_resolution=True,
     scaling_factor=0.7,
 )
 

@@ -167,7 +167,15 @@ def frame_geometry(spec, config: Config) -> tuple[int, int, int]:
     The backend's native geometry unless the config overrides it. One helper rather than
     four call sites reading `spec.default_*` directly, so a resolution override cannot
     apply to the inversion but not to the visuals of the same run.
+
+    A backend that cannot generate at another geometry ignores the override entirely. It
+    has to be ignored rather than refused: `RESOLUTION=native` is set once for a whole
+    multi-backend run, and CogVideoX raising on it took out three of the five stages while
+    the Wan stages it was meant for ran fine. Ignoring keeps both arms matched, which is
+    the property the comparison actually needs.
     """
+    if getattr(spec, "fixed_resolution", False):
+        return spec.default_num_frames, spec.default_height, spec.default_width
     return (
         spec.default_num_frames,
         config.data.height or spec.default_height,

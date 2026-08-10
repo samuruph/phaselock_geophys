@@ -45,6 +45,10 @@ class LatentSpec:
         default_num_frames: Native frame count (must satisfy ``k * temporal_ratio + 1``).
         default_fps: Native frame rate.
         default_height / default_width: Native generation resolution.
+        fixed_resolution: The checkpoint cannot generate at any other geometry, so a
+            configured override must be ignored rather than passed through. True for
+            CogVideoX-5B-I2V, whose patch embedding raises outright ("It is currently not
+            possible to generate videos at a different resolution than the defaults").
         scaling_factor: Scalar latent normalisation. Mutually exclusive with
             ``latents_mean``/``latents_std``.
         latents_mean / latents_std: Per-channel latent normalisation.
@@ -61,6 +65,7 @@ class LatentSpec:
     default_fps: int
     default_height: int
     default_width: int
+    fixed_resolution: bool = False
     scaling_factor: Optional[float] = None
     latents_mean: Optional[tuple[float, ...]] = None
     latents_std: Optional[tuple[float, ...]] = None
