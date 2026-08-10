@@ -246,7 +246,11 @@ class GeoPhysSignals:
     turning_angle: torch.Tensor
     acceleration: torch.Tensor
     residual: torch.Tensor
+    energy: torch.Tensor
+    jerk: torch.Tensor
     statistics: dict[str, torch.Tensor]
+    """``momentum`` has no per-frame entry: it is a ratio over the whole trajectory, like
+    ``ang`` is a standard deviation over it, so there is nothing to plot against time."""
 
 
 def geophys_signals(
@@ -291,7 +295,8 @@ def geophys_signals(
         "jerk": jerk.pow(2).mean() if jerk is not None else torch.zeros((), dtype=s.dtype),
     }
     return GeoPhysSignals(
-        speed=s, turning_angle=theta, acceleration=accel, residual=resid, statistics=statistics
+        speed=s, turning_angle=theta, acceleration=accel, residual=resid,
+        energy=energy, jerk=jerk if jerk is not None else s[:0], statistics=statistics
     )
 
 

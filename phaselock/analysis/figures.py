@@ -1039,84 +1039,177 @@ def category_table(
     """
     import matplotlib.pyplot as plt
     import numpy as np
+    from matplotlib.patches import Rectangle
 
     if not cells:
         return None
 
-    order = ["hidden_states", "latent", "x0_hat", "velocity", "dinov2"]
     statistics = list(STATISTICS)
-    sources = [s for s in order if any(c.source == s for c in cells)]
-    sources += sorted({c.source for c in cells} - set(order))
+    sources = palette.ordered_sources({c.source for c in cells}, baselines_first=True)
     categories = sorted({c.category for c in cells})
     lookup = {(c.source, c.statistic, c.category): c for c in cells}
 
-    rows = [(src, stat) for src in sources for stat in statistics
-            if any((src, stat, cat) in lookup for cat in categories)]
-    if not rows:
+    # One header row per source, then its statistics. Two-level row labels crammed into a
+    # single left margin is what made the previous version unreadable; a section header is
+    # how the table this imitates does it.
+    layout: list[tuple[str, str, str]] = []
+    for src in sources:
+        present = [s for s in statistics
+                   if any((src, s, cat) in lookup for cat in categories)]
+        if not present:
+            continue
+        layout.append(("head", src, ""))
+        layout.extend(("cell", src, stat) for stat in present)
+    if not any(kind == "cell" for kind, _, _ in layout):
         return None
 
-    grid = np.full((len(rows), len(categories)), np.nan)
-    for r, (src, stat) in enumerate(rows):
-        for c, cat in enumerate(categories):
-            cell = lookup.get((src, stat, cat))
-            if cell is not None:
-                grid[r, c] = 100 * cell.mean
+    def value(src: str, stat: str, cat: str) -> float:
+        cell = lookup.get((src, stat, cat))
+        return float("nan") if cell is None else 100 * cell.mean
 
-    figure, axis = plt.subplots(
-        figsize=(1.05 * len(categories) + 5.0, 0.42 * len(rows) + 2.6)
-    )
-    # A dedicated left margin for the source labels. Placed relative to the axes they
-    # sat on top of the statistic names, whose width depends on the longest one.
-    figure.subplots_adjust(left=0.30)
+    # The row mean across categories, which is the column the eye actually compares. Named
+    # M.Avg for continuity with the benchmark tables this mirrors.
+    averages: dict[tuple[str, str], tuple[float, float]] = {}
+    for kind, src, stat in layout:
+        if kind != "cell":
+            continue
+        row = [value(src, stat, cat) for cat in categories]
+        row = [v for v in row if not np.isnan(v)]
+        if row:
+            averages[(src, stat)] = (
+                float(np.mean(row)), float(np.std(row)) if len(row) > 1 else 0.0
+            )
+
+    baselines = set(palette.BASELINE_SOURCES)
+    columns = list(categories) + ["M.Avg."]
+
+    def best_in(column: str, want_baseline: bool) -> Optional[tuple[str, str]]:
+        """Best (source, statistic) in one column, within or outside the baseline block."""
+        scored = [
+            ((src, stat), averages[(src, stat)][0] if column == "M.Avg."
+             else value(src, stat, column))
+            for kind, src, stat in layout
+            if kind == "cell" and ((src in baselines) == want_baseline)
+            and (src, stat) in averages
+        ]
+        scored = [(key, v) for key, v in scored if not np.isnan(v)]
+        return max(scored, key=lambda kv: kv[1])[0] if scored else None
+
+    marks = {
+        col: (best_in(col, want_baseline=False), best_in(col, want_baseline=True))
+        for col in columns
+    }
+
+    # Column x: categories packed, then a gap, then M.Avg set apart -- it aggregates the
+    # others and must not read as one more category.
+    xs = {cat: float(i) for i, cat in enumerate(categories)}
+    xs["M.Avg."] = len(categories) + 0.35
+    width, height = 1.12, 1.0
+    label_width = 4.6
+
+    figure, axis = plt.subplots(figsize=(
+        1.12 * (len(categories) + 1.6) + label_width,
+        0.30 * len(layout) + 2.9,
+    ))
+    axis.set_axis_off()
+    left, right = -label_width / 1.12, len(categories) + 1.1
+    axis.set_xlim(left, right)
+    axis.set_ylim(len(layout) - 0.5, -3.9)
+
+    cmap = plt.get_cmap("RdYlGn")
     # Diverging about chance, so 50% reads as "nothing" rather than as a colour. Clipped
     # symmetrically: without it one 100% cell washes out every real difference.
-    image = axis.imshow(grid, cmap="RdYlGn", vmin=30, vmax=90, aspect="auto")
+    normalise = plt.Normalize(vmin=30, vmax=90)
 
-    for r in range(len(rows)):
-        for c, cat in enumerate(categories):
-            cell = lookup.get((rows[r][0], rows[r][1], cat))
-            if cell is None:
-                continue
-            value = 100 * cell.mean
-            axis.text(c, r,
-                      f"{value:.0f}±{100*cell.std:.0f}\n({100*cell.best:.0f})",
-                      ha="center", va="center", fontsize=6.2,
-                      color="#111" if 40 < value < 82 else "#fff")
+    for column in columns:
+        x = xs[column]
+        axis.text(x, -1.25, column.replace(" ", "\n") if column != "M.Avg." else column,
+                  ha="center", va="bottom", fontsize=8.5,
+                  fontweight="bold" if column == "M.Avg." else "normal",
+                  color=palette.TEXT_PRIMARY)
+    axis.plot([left, len(categories) + 1.0], [-0.55, -0.55],
+              color=palette.TEXT_PRIMARY, linewidth=1.4, clip_on=False)
 
-    axis.set_xticks(np.arange(len(categories)), categories, rotation=35, ha="right",
-                    fontsize=8)
-    axis.set_yticks(np.arange(len(rows)),
-                    [palette.statistic_plain(s) for _, s in rows], fontsize=8)
-    axis.set_xticks(np.arange(len(categories) + 1) - 0.5, minor=True)
-    axis.set_yticks(np.arange(len(rows) + 1) - 0.5, minor=True)
-    axis.grid(which="minor", color=palette.SURFACE, linewidth=1.4)
-    axis.grid(which="major", visible=False)
-    axis.tick_params(which="minor", length=0)
+    # Title and colour key share the top band, both in data coordinates so they stay put
+    # however many rows there are. A vertical bar down the side of a table this tall floats
+    # in the middle of nothing and reads as a sixth column.
+    axis.text(left, -3.08, title, ha="left", va="center", fontsize=13,
+              fontweight="bold", color=palette.TEXT_PRIMARY)
+    key_left, key_right = len(categories) - 2.0, len(categories) + 1.0
+    axis.imshow(np.linspace(30, 90, 256)[None, :], cmap=cmap, norm=normalise,
+                extent=(key_left, key_right, -2.95, -3.21), aspect="auto", zorder=3)
+    axis.add_patch(Rectangle((key_left, -3.21), key_right - key_left, 0.26,
+                             facecolor="none", edgecolor=palette.TEXT_MUTED,
+                             linewidth=0.6, zorder=4))
+    for value in (30, 50, 70, 90):
+        x = key_left + (value - 30) / 60 * (key_right - key_left)
+        if value == 50:
+            axis.plot([x, x], [-3.21, -2.95], color=palette.TEXT_PRIMARY, linewidth=1.2,
+                      zorder=5)
+        axis.text(x, -2.81, str(value), ha="center", va="center", fontsize=6.5,
+                  color=palette.TEXT_MUTED)
+    axis.text((key_left + key_right) / 2, -3.40, f"{value_label}   (50 = chance)",
+              ha="center", va="center", fontsize=7.5, color=palette.TEXT_MUTED)
 
-    # A rule and a label per source, so the block structure is visible rather than
-    # inferred from the repeating statistic names.
-    start = 0
-    for src in sources:
-        count = sum(1 for s, _ in rows if s == src)
-        if not count:
+    for r, (kind, src, stat) in enumerate(layout):
+        if kind == "head":
+            tag = "  — external baseline" if src in baselines else ""
+            axis.text(-label_width / 1.12, r, palette.source_label(src) + tag,
+                      ha="left", va="center", fontsize=9.5, fontweight="bold",
+                      color=palette.TEXT_PRIMARY)
+            if r:
+                axis.plot([-label_width / 1.12, len(categories) + 1.0],
+                          [r - 0.55, r - 0.55], color=palette.TEXT_PRIMARY,
+                          linewidth=1.0 if src not in baselines else 1.4, clip_on=False)
             continue
-        if start:
-            axis.axhline(start - 0.5, color=palette.TEXT_PRIMARY, linewidth=1.8)
-        axis.text(0.055, 1 - (start + count / 2) / len(rows), palette.source_label(src),
-                  transform=figure.transFigure, ha="center", va="center",
-                  fontsize=9.5, fontweight="bold", rotation=90)
-        start += count
 
-    figure.colorbar(image, ax=axis, fraction=0.022, pad=0.015, label=value_label)
-    axis.set_title(title, loc="left", pad=10)
+        axis.text(-label_width / 1.12 + 0.35, r, palette.statistic_plain(stat),
+                  ha="left", va="center", fontsize=8, color=palette.TEXT_PRIMARY)
+
+        for column in columns:
+            x, cell = xs[column], lookup.get((src, stat, column))
+            if column == "M.Avg.":
+                if (src, stat) not in averages:
+                    continue
+                mean, spread = averages[(src, stat)]
+                head, tail, best = f"{mean:.1f}", f" ±{spread:.1f}", None
+            else:
+                if cell is None:
+                    axis.text(x, r, "–", ha="center", va="center", fontsize=8,
+                              color=palette.TEXT_MUTED)
+                    continue
+                mean, spread, best = 100 * cell.mean, 100 * cell.std, 100 * cell.best
+                head, tail = f"{mean:.0f}", f" ±{spread:.0f}"
+                axis.add_patch(Rectangle(
+                    (x - width / 2, r - height / 2), width, height,
+                    facecolor=cmap(normalise(mean)), edgecolor="none", zorder=0,
+                ))
+
+            strong, weak = marks[column]
+            key = (src, stat)
+            bold = key == strong and src not in baselines
+            ink = palette.TEXT_PRIMARY if column == "M.Avg." or 40 < mean < 82 else "#fff"
+            axis.text(x - 0.06, r - (0.14 if best is not None else 0.0), head,
+                      ha="right", va="center", fontsize=8.6,
+                      fontweight="bold" if bold else "normal", color=ink)
+            axis.text(x - 0.05, r - (0.14 if best is not None else 0.0), tail,
+                      ha="left", va="center", fontsize=6.6, color=ink)
+            if best is not None:
+                axis.text(x, r + 0.24, f"({best:.0f})", ha="center", va="center",
+                          fontsize=5.9, color=ink, alpha=0.75)
+            if key == weak and src in baselines:
+                axis.plot([x - 0.34, x + 0.34], [r + 0.40, r + 0.40],
+                          color=ink, linewidth=0.9)
+
     palette.caption(figure, (
         "Each cell is mean ± s.d. over the probe grid, with the single best cell in "
-        "parentheses. The mean is the number to read; the spread says whether the signal "
-        "works everywhere or only in patches, and the max is what a best-of-N search "
-        "would have found. 50% is chance."
+        "parentheses; M.Avg. averages the categories. The mean is the number to read; the "
+        "spread says whether the signal works everywhere or only in patches, and the max "
+        "is what a best-of-N search would have found. 50% is chance (marked on the bar). "
+        "Bold: best internal readout per column. Underline: best baseline per column."
     ))
     path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, bbox_inches="tight", dpi=140)
+    figure.savefig(path, bbox_inches="tight", dpi=150)
     plt.close(figure)
     return path
 

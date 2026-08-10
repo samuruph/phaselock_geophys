@@ -465,7 +465,7 @@ for why the paper's literal global fit is degenerate.
 
 **The five summaries.** `φ_speed = std({s_t})`, `φ_curv = mean({θ_t})`,
 `φ_ang = std({θ_t})`, `φ_accel = mean({‖a_t‖²})`, `φ_perr = mean({‖ε_t‖})` —
-[`geophys_statistics`](../phaselock/metrics/geophys.py#L298). Standard deviations are
+[`geophys_statistics`](../phaselock/metrics/geophys.py#L303). Standard deviations are
 **population**, not sample. Note again `accel` is squared and `perr` is not; that
 asymmetry is the paper's.
 

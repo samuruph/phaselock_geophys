@@ -113,6 +113,29 @@ SOURCE_LABELS = {
     "dinov2": "DINOv2  (external)",
 }
 
+# Sources that are *not* the thing under study: a frozen off-the-shelf encoder run on the
+# decoded pixels. Everything else is read out of the video model itself.
+BASELINE_SOURCES = ("dinov2",)
+
+# Reading order for the internal sources: the DiT first because it is the representation
+# the whole question is about, then the three the sampler hands us directly.
+INTERNAL_ORDER = ("hidden_states", "latent", "x0_hat", "velocity", "attention")
+
+
+def ordered_sources(names, baselines_first: bool = False) -> list:
+    """Canonical source order, with unknown names appended alphabetically.
+
+    ``baselines_first`` puts the external encoder at the top, which is how a comparison
+    table wants it -- the row you are measuring against belongs above the rows being
+    measured, not buried at the bottom.
+    """
+    present = set(names)
+    internal = [s for s in INTERNAL_ORDER if s in present]
+    baseline = [s for s in BASELINE_SOURCES if s in present]
+    known = set(INTERNAL_ORDER) | set(BASELINE_SOURCES)
+    rest = sorted(present - known)
+    return baseline + internal + rest if baselines_first else internal + rest + baseline
+
 
 def apply_style() -> None:
     """Set global matplotlib defaults: recessive chrome, readable text."""

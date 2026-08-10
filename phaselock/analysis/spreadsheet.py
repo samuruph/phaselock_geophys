@@ -31,10 +31,12 @@ def write_category_workbook(
     from openpyxl.styles import Alignment, Border, Font, Side
     from openpyxl.utils import get_column_letter
 
-    order = ["hidden_states", "latent", "x0_hat", "velocity", "dinov2"]
+    from . import palette
+
     statistics = list(STATISTICS)
-    sources = [s for s in order if any(c.source == s for c in cells)]
-    sources += sorted({c.source for c in cells} - set(order))
+    # Baseline first, matching the figure: the row you measure against belongs above the
+    # rows being measured.
+    sources = palette.ordered_sources({c.source for c in cells}, baselines_first=True)
     categories = sorted({c.category for c in cells})
     lookup = {(c.source, c.statistic, c.category): c for c in cells}
 
@@ -51,10 +53,15 @@ def write_category_workbook(
     for index, category in enumerate(categories):
         head = sheet.cell(row=1, column=3 + index, value=category)
         head.font, head.alignment = bold, centre
+    average_column = 3 + len(categories)
+    for offset, name in enumerate(("M.Avg.", "M.Avg. sd")):
+        head = sheet.cell(row=1, column=average_column + offset, value=name)
+        head.font, head.alignment = bold, centre
     # The mean drives the colour scale, so the max sits in its own block to the right
     # rather than being buried in a string the scale cannot read.
+    best_column = average_column + 3
     for index, category in enumerate(categories):
-        head = sheet.cell(row=1, column=3 + len(categories) + 1 + index,
+        head = sheet.cell(row=1, column=best_column + index,
                           value=f"{category} (best cell)")
         head.font, head.alignment = bold, centre
 
@@ -68,26 +75,36 @@ def write_category_workbook(
         for statistic in present:
             sheet.cell(row=row, column=1, value=source if row == first else None)
             sheet.cell(row=row, column=2, value=statistic)
+            across = []
             for index, category in enumerate(categories):
                 cell = lookup.get((source, statistic, category))
                 if cell is None:
                     continue
+                across.append(100 * cell.mean)
                 mean = sheet.cell(row=row, column=3 + index, value=round(100 * cell.mean, 1))
                 mean.alignment = centre
                 mean.number_format = "0.0"
-                spread = sheet.cell(row=row, column=3 + len(categories) + 1 + index,
+                spread = sheet.cell(row=row, column=best_column + index,
                                     value=round(100 * cell.best, 1))
                 spread.alignment = centre
                 spread.number_format = "0.0"
+            if across:
+                mean_of_means = sum(across) / len(across)
+                variance = sum((v - mean_of_means) ** 2 for v in across) / len(across)
+                for offset, value in enumerate((mean_of_means, variance**0.5)):
+                    average = sheet.cell(row=row, column=average_column + offset,
+                                         value=round(value, 1))
+                    average.alignment = centre
+                    average.number_format = "0.0"
             row += 1
         if row > first + 1:
             sheet.merge_cells(start_row=first, start_column=1, end_row=row - 1, end_column=1)
         sheet.cell(row=first, column=1).alignment = centre
         sheet.cell(row=first, column=1).font = bold
-        for column in range(1, 3 + 2 * len(categories) + 1):
+        for column in range(1, best_column + len(categories)):
             sheet.cell(row=row - 1, column=column).border = Border(bottom=thick)
 
-    span = f"C2:{get_column_letter(2 + len(categories))}{row - 1}"
+    span = f"C2:{get_column_letter(average_column)}{row - 1}"
     sheet.conditional_formatting.add(span, ColorScaleRule(
         start_type="num", start_value=SCALE_MIN, start_color="D73027",
         mid_type="num", mid_value=SCALE_MID, mid_color="FFFFBF",
@@ -96,7 +113,7 @@ def write_category_workbook(
     sheet.freeze_panes = "C2"
     sheet.column_dimensions["A"].width = 18
     sheet.column_dimensions["B"].width = 14
-    for index in range(2 * len(categories) + 1):
+    for index in range(best_column + len(categories) - 3):
         sheet.column_dimensions[get_column_letter(3 + index)].width = 13
 
     long = book.create_sheet("all cells")

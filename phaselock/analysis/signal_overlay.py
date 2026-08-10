@@ -44,9 +44,12 @@ STRIP_HEIGHT = 2.05
 """Inches. Tall enough for five readable panels, short enough not to dwarf the video."""
 
 
-PER_FRAME = ("speed", "curv", "accel", "perr")
-"""The four intermediates that exist per frame. `ang` has no per-frame form -- it is a
-standard deviation over the whole clip, so there is nothing to plot against time."""
+PER_FRAME = ("speed", "curv", "accel", "perr", "energy", "jerk")
+"""The intermediates that exist per frame.
+
+`ang` and `momentum` are absent because neither has one: `ang` is a standard deviation
+over the whole clip and `momentum` a ratio over it, so there is nothing to plot against
+time for either."""
 
 
 def per_video_frame(
@@ -100,6 +103,8 @@ def per_video_frame(
             ("curv", signals.turning_angle),
             ("accel", signals.acceleration),
             ("perr", signals.residual),
+            ("energy", signals.energy),
+            ("jerk", signals.jerk),
         ):
             collected[name].append(series.detach().float().cpu().numpy())
 
@@ -137,6 +142,12 @@ def _latent_span(index: int, name: str, order: int) -> range:
         return range(index, index + 2)
     if name in ("curv", "accel"):
         return range(index, index + 3)
+    if name == "energy":
+        # E_t = 1/2||v_t||^2 is a function of one displacement, so it spans what v_t spans.
+        return range(index, index + 2)
+    if name == "jerk":
+        # A third difference touches four latents, centred between the middle two.
+        return range(index, index + 4)
     return range(index + order, index + order + 1)
 
 

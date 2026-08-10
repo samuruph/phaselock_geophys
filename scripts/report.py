@@ -50,6 +50,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--category", default="family",
                         choices=["family", "scenario", "violation"],
                         help="grouping for the per-category breakdown")
+    # A run written before a statistic existed can be rebuilt from its trajectories by
+    # scripts/rescore_trajectories.py. Pointing at that output beats copying it over the
+    # original, which loses the numbers the run actually reported.
+    parser.add_argument("--statistics", default="statistics.csv",
+                        help="statistics file to read, relative to run_dir "
+                             "(e.g. statistics_rescored.csv)")
     return parser.parse_args()
 
 
@@ -87,11 +93,12 @@ def main() -> None:
     ranked(rows, args.top)
     heatmaps(rows, args.statistic, args.source, args.kind)
     if args.figures:
-        write_figures(rows, args.run_dir, args.kind)
-        write_category_table(args.run_dir, args.category)
+        write_figures(rows, args.run_dir, args.kind, args.statistics)
+        write_category_table(args.run_dir, args.category, args.statistics)
 
 
-def write_category_table(run_dir: Path, key: str) -> None:
+def write_category_table(run_dir: Path, key: str,
+                         statistics_name: str = "statistics.csv") -> None:
     """Where each signal succeeds and fails, as a figure and a spreadsheet.
 
     The aggregate hides this: at n=96 the best cell scored 100% on four scenarios and
@@ -105,7 +112,7 @@ def write_category_table(run_dir: Path, key: str) -> None:
     from phaselock.datasets import get_paired_dataset
     from phaselock.experiments.detection import score_by_category
 
-    statistics = load(run_dir / "statistics.csv")
+    statistics = load(run_dir / statistics_name)
     if not statistics:
         return
     config = _json.loads((run_dir / "config.json").read_text())
@@ -407,7 +414,8 @@ def heatmaps(rows: list[dict], statistic: str | None, source: str | None, kind: 
         print()
 
 
-def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
+def write_figures(rows: list[dict], run_dir: Path, kind: str,
+                  statistics_name: str = "statistics.csv") -> None:
     """Render the figure set. See phaselock/analysis/figures.py for what each asks."""
     import csv as _csv
 
@@ -420,7 +428,7 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str) -> None:
     dataset = get_paired_dataset(config["data"]["name"])
     pairs = dataset.select(limit=config["data"]["limit"], seed=config["data"]["seed"])
 
-    statistics = load(run_dir / "statistics.csv")
+    statistics = load(run_dir / statistics_name)
     summaries, null, steps_to_timestep = None, None, None
     if statistics:
         results = score_signals(statistics, pairs, resamples=200)
