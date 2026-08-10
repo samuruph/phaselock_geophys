@@ -486,9 +486,14 @@ def statistic_comparison(
     import matplotlib.pyplot as plt
     import numpy as np
 
+    # The two flow-coupling metrics are `kind="coupling"`, not `kind="phi"`, so filtering
+    # on `kind` alone dropped them -- while the caption went on promising a divider that
+    # separated them from the rest. They belong here for the same reason they belong in the
+    # source comparison: both are "a number read off the trajectory".
+    wanted = {kind, "coupling"} if kind == "phi" else {kind}
     grouped: dict[str, list[float]] = defaultdict(list)
     for row in rows:
-        if row["source"] != source or row.get("kind") != kind:
+        if row["source"] != source or row.get("kind") not in wanted:
             continue
         grouped[row["statistic"]].append(_pct(row["accuracy"]))
     if not grouped:
@@ -1034,6 +1039,144 @@ def render_all(
                                source=source, x_axis="step",
                                steps_to_timestep=steps_to_timestep))
     return written
+
+
+def summary_table(
+    summaries: Sequence[Any],
+    path: Path,
+    title: str = "Violation detection — every signal, every representation",
+    value_label: str = "pairwise accuracy (%)",
+) -> Optional[Path]:
+    """The whole result on one grid: sources down, signals across.
+
+    The category tables answer *where* a signal works. This answers the prior question --
+    which signal, on which representation -- without splitting the pairs, so every cell
+    rests on the full sample rather than a quarter of it. It is the table to read first,
+    and the one to quote.
+
+    Same cell convention and colour scale as the category tables, so a green cell means
+    the same thing in both.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.patches import Rectangle
+
+    summaries = [s for s in summaries if s.kind in ("phi", "coupling")]
+    if not summaries:
+        return None
+
+    sources = palette.ordered_sources({s.source for s in summaries}, baselines_first=True)
+    order = tuple(STATISTICS) + ("alignment", "erosion")
+    statistics = [n for n in order if any(s.statistic == n for s in summaries)]
+    lookup = {(s.source, s.statistic): s for s in summaries}
+    if not statistics:
+        return None
+
+    baselines = set(palette.BASELINE_SOURCES)
+    # Best per column, once among the internal rows and once among the baseline rows, so a
+    # column can be read without comparing every number by eye. With a single baseline row
+    # it wins every column trivially, and marking all of them says nothing.
+    rival_baselines = sum(1 for src in sources if src in baselines) > 1
+    marks = {}
+    for name in statistics:
+        picks = []
+        for want in (False, True):
+            scored = [(src, lookup[(src, name)].mean) for src in sources
+                      if (src in baselines) == want and (src, name) in lookup]
+            picks.append(max(scored, key=lambda kv: kv[1])[0]
+                         if scored and (rival_baselines or not want) else None)
+        marks[name] = tuple(picks)
+
+    # Wide enough for the longest row label plus its cell count, which would otherwise
+    # print over the first column.
+    width, height = 1.30, 0.86
+    label_width = 1.7 + 0.105 * max(
+        len(palette.source_label(src)) + (22 if src in baselines else 0) for src in sources
+    )
+    figure, axis = plt.subplots(figsize=(
+        1.30 * len(statistics) + label_width + 1.0, 0.62 * len(sources) + 3.4,
+    ))
+    axis.set_axis_off()
+    left = -label_width / 1.30
+    axis.set_xlim(left, len(statistics) - 0.3)
+    axis.set_ylim(len(sources) - 0.4, -2.9)
+
+    cmap, normalise = plt.get_cmap("RdYlGn"), plt.Normalize(vmin=30, vmax=90)
+
+    for index, name in enumerate(statistics):
+        axis.text(index, -0.95, palette.statistic_plain(name).replace(" ", "\n"),
+                  ha="center", va="bottom", fontsize=8, color=palette.TEXT_PRIMARY)
+    axis.plot([left, len(statistics) - 0.4], [-0.52, -0.52],
+              color=palette.TEXT_PRIMARY, linewidth=1.4, clip_on=False)
+
+    for row, source in enumerate(sources):
+        tag = "   — external baseline" if source in baselines else ""
+        cells = max((lookup[(source, n)].n_cells for n in statistics
+                     if (source, n) in lookup), default=0)
+        axis.text(left, row - 0.11, palette.source_label(source) + tag, ha="left",
+                  va="center", fontsize=10, fontweight="bold", color=palette.TEXT_PRIMARY)
+        axis.text(left, row + 0.20, f"{cells} probe cells", ha="left", va="center",
+                  fontsize=7, color=palette.TEXT_MUTED)
+        if row and sources[row - 1] in baselines:
+            axis.plot([left, len(statistics) - 0.4], [row - 0.5, row - 0.5],
+                      color=palette.TEXT_PRIMARY, linewidth=1.4, clip_on=False)
+
+        for index, name in enumerate(statistics):
+            item = lookup.get((source, name))
+            if item is None:
+                axis.text(index, row, "–", ha="center", va="center", fontsize=9,
+                          color=palette.TEXT_MUTED)
+                continue
+            mean, spread, best = 100 * item.mean, 100 * item.std, 100 * item.best
+            axis.add_patch(Rectangle(
+                (index - width / 2, row - height / 2), width, height,
+                facecolor=cmap(normalise(mean)), edgecolor="none", zorder=0,
+            ))
+            ink = palette.TEXT_PRIMARY if 40 < mean < 82 else "#fff"
+            strong, weak = marks[name]
+            axis.text(index - 0.04, row - 0.12, f"{mean:.1f}", ha="right", va="center",
+                      fontsize=10.5, color=ink,
+                      fontweight="bold" if source == strong and source not in baselines
+                      else "normal")
+            axis.text(index - 0.03, row - 0.11, f" ±{spread:.1f}", ha="left", va="center",
+                      fontsize=7.5, color=ink)
+            axis.text(index, row + 0.22, f"best cell {best:.0f}",
+                      ha="center", va="center", fontsize=6.8, color=ink, alpha=0.8)
+            if source == weak and source in baselines:
+                axis.plot([index - 0.38, index + 0.38], [row + 0.34, row + 0.34],
+                          color=ink, linewidth=0.9)
+
+    axis.text(left, -2.45, title, ha="left", va="center", fontsize=13,
+              fontweight="bold", color=palette.TEXT_PRIMARY)
+    key_left, key_right = len(statistics) - 3.0, len(statistics) - 0.4
+    axis.imshow(np.linspace(30, 90, 256)[None, :], cmap=cmap, norm=normalise,
+                extent=(key_left, key_right, -2.34, -2.56), aspect="auto", zorder=3)
+    axis.add_patch(Rectangle((key_left, -2.56), key_right - key_left, 0.22,
+                             facecolor="none", edgecolor=palette.TEXT_MUTED,
+                             linewidth=0.6, zorder=4))
+    for value in (30, 50, 70, 90):
+        x = key_left + (value - 30) / 60 * (key_right - key_left)
+        if value == 50:
+            axis.plot([x, x], [-2.56, -2.34], color=palette.TEXT_PRIMARY, linewidth=1.2,
+                      zorder=5)
+        axis.text(x, -2.20, str(value), ha="center", va="center", fontsize=6.5,
+                  color=palette.TEXT_MUTED)
+    axis.text((key_left + key_right) / 2, -2.72, f"{value_label}   (50 = chance)",
+              ha="center", va="center", fontsize=7.5, color=palette.TEXT_MUTED)
+
+    palette.caption(figure, (
+        "Each cell is the mean ± s.d. of pairwise accuracy over that source's whole probe "
+        "grid, with its single best cell underneath. Every cell uses all the pairs — this "
+        "is the aggregate the per-category tables break down. 50% is chance. Bold: best "
+        "internal readout per signal."
+        + (" Underline: best baseline per signal." if rival_baselines else "")
+        + " A dash means the signal is not defined for that source: the two coupling "
+        "metrics need the sampler's own ODE state, which only the VAE latent is."
+    ))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, bbox_inches="tight", dpi=150)
+    plt.close(figure)
+    return path
 
 
 def category_table(

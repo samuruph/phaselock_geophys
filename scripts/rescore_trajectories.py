@@ -25,7 +25,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from phaselock.datasets import get_paired_dataset
-from phaselock.experiments.detection import statistics_from_record
+from phaselock.experiments.detection import (
+    score_ensembles,
+    score_signals,
+    statistics_from_record,
+)
 from phaselock.metrics.geophys import STATISTICS
 from phaselock.probes import ProbeRecord, StatisticRow
 from phaselock.progress import track
@@ -36,6 +40,9 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--out", default="statistics_rescored.csv")
+    parser.add_argument("--signals-out", default="signals_rescored.csv")
+    parser.add_argument("--resamples", type=int, default=1000,
+                        help="bootstrap resamples for the confidence intervals")
     args = parser.parse_args()
 
     trajectories = args.run_dir / "trajectories"
@@ -73,7 +80,28 @@ def main() -> None:
         writer = csv.DictWriter(handle, fieldnames=StatisticRow.fieldnames())
         writer.writeheader()
         writer.writerows(row.flatten() for row in rows)
-    print(f"\nwrote {out} ({len(rows)} rows)\n")
+    print(f"\nwrote {out} ({len(rows)} rows)")
+
+    # And the scored form. Half the figures read signals.csv rather than the statistics --
+    # per-cell accuracy with a confidence interval is what they plot -- so rescoring the
+    # statistics alone leaves those figures showing the five the run was born with. Same
+    # schema and same column order as run_inversion.py writes, so report.py cannot tell
+    # the difference.
+    flat = [row.flatten() for row in rows]
+    scored = {**score_signals(flat, usable, resamples=args.resamples),
+              **score_ensembles(flat, usable)}
+    signals = args.run_dir / args.signals_out
+    with open(signals, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["source", "block", "step", "statistic", "kind", "accuracy",
+                         "ci_low", "ci_high", "auc", "n_pairs"])
+        for key, result in sorted(scored.items(), key=lambda i: i[1].accuracy, reverse=True):
+            writer.writerow(
+                [key.source, key.block, key.step, key.statistic, key.kind,
+                 f"{result.accuracy:.6f}", f"{result.ci_low:.6f}", f"{result.ci_high:.6f}",
+                 "" if result.auc is None else f"{result.auc:.6f}", result.n_pairs]
+            )
+    print(f"wrote {signals} ({len(scored)} signals)\n")
 
     # Accuracy per (source, statistic), meaned over the probe grid -- the same summary the
     # source-comparison bars use.

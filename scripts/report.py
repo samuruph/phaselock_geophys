@@ -59,6 +59,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--statistics", default="statistics.csv",
                         help="statistics file to read, relative to run_dir "
                              "(e.g. statistics_rescored.csv)")
+    parser.add_argument("--signals", default="signals.csv",
+                        help="scored-signal file to read, relative to run_dir. Pair it "
+                             "with --statistics; rescore_trajectories.py writes both.")
     return parser.parse_args()
 
 
@@ -68,7 +71,7 @@ def main() -> None:
     # Dispatch on what the run actually produced, so one command serves every stage.
     # Requiring signals.csv meant the generation and step-sweep runs wrote their CSVs and
     # then silently had no figures, which is how they sat unreported for a day.
-    if not (args.run_dir / "signals.csv").is_file():
+    if not (args.run_dir / args.signals).is_file():
         for filename, handler in (
             ("sweep.csv", step_sweep_report),
             ("candidates.csv", generation_report),
@@ -81,7 +84,7 @@ def main() -> None:
             "sweep.csv (step sweep) or candidates.csv (generation)"
         )
 
-    rows = load(args.run_dir / "signals.csv")
+    rows = load(args.run_dir / args.signals)
     for row in rows:
         row["accuracy"] = float(row["accuracy"])
         row["ci_low"] = float(row["ci_low"])
@@ -483,6 +486,20 @@ def write_figures(rows: list[dict], run_dir: Path, kind: str,
     ]
 
     from phaselock.backends import get_spec
+
+    # The aggregate table: sources down, signals across, one view of everything. The
+    # per-category tables break this down; this is the thing they break down, and every
+    # cell here rests on the full sample rather than a quarter of it.
+    if summaries:
+        from phaselock.analysis import summary_table
+        from phaselock.analysis.spreadsheet import write_summary_workbook
+
+        combined = list(summaries) + list(external_summaries or [])
+        book = write_summary_workbook(combined, run_dir / "overall.xlsx")
+        print(f"  {book.name}")
+        produced = summary_table(combined, run_dir / "figures" / "00_overall.png")
+        if produced:
+            print(f"  {produced.name}")
 
     sweep = load(run_dir / "sweep.csv") or None
     written = render_all(
