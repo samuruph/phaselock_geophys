@@ -197,3 +197,55 @@ def test_float64_input_is_not_silently_downcast():
     z = torch.randn(T, D, dtype=torch.float64)
     assert geophys_statistics(z)["speed"].dtype == torch.float64
     assert geophys_statistics(z.to(torch.bfloat16))["speed"].dtype == torch.float32
+
+
+def test_energy_momentum_and_jerk_vanish_on_a_straight_line():
+    """The same analytic anchor the other five have: perfectly regular motion scores 0."""
+    import torch
+
+    from phaselock.metrics.geophys import geophys_statistics
+
+    straight = torch.arange(12, dtype=torch.float32).unsqueeze(1) * torch.ones(1, 6)
+    stats = geophys_statistics(straight)
+    for name in ("energy", "momentum", "jerk"):
+        assert float(stats[name]) == pytest.approx(0.0, abs=1e-5), name
+
+
+def test_momentum_is_one_for_a_round_trip():
+    """Out and back: every step moved, none of it went anywhere."""
+    import torch
+
+    from phaselock.metrics.geophys import geophys_statistics
+
+    out = torch.arange(6, dtype=torch.float32).unsqueeze(1) * torch.ones(1, 4)
+    trip = torch.cat([out, out.flip(0)[1:]])
+    assert float(geophys_statistics(trip)["momentum"]) == pytest.approx(1.0, abs=1e-4)
+
+
+def test_jerk_spikes_on_an_impulse_but_not_on_constant_acceleration():
+    """Jerk is the change of force, so a steady force must not trigger it."""
+    import torch
+
+    from phaselock.metrics.geophys import geophys_statistics
+
+    t = torch.arange(12, dtype=torch.float32).unsqueeze(1)
+    parabola = (t**2) * torch.ones(1, 4)          # constant acceleration
+    impulse = (t * torch.ones(1, 4)).clone()
+    impulse[6:] += 20.0                            # a teleport
+
+    assert float(geophys_statistics(parabola)["jerk"]) == pytest.approx(0.0, abs=1e-3)
+    assert float(geophys_statistics(impulse)["jerk"]) > 100.0
+
+
+def test_energy_is_scale_free():
+    """A coefficient of variation, so a VAE latent and a hidden state are comparable
+    despite feature magnitudes differing by orders of magnitude."""
+    import torch
+
+    from phaselock.metrics.geophys import geophys_statistics
+
+    torch.manual_seed(0)
+    z = torch.randn(14, 8).cumsum(0)
+    assert float(geophys_statistics(z)["energy"]) == pytest.approx(
+        float(geophys_statistics(z * 1000)["energy"]), rel=1e-4
+    )

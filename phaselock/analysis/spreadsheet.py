@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
+from ..metrics.geophys import STATISTICS
+
 # Matches the figure's clipping, so a cell that reads green there reads green here.
 SCALE_MIN, SCALE_MID, SCALE_MAX = 30.0, 60.0, 90.0
 
@@ -30,7 +32,7 @@ def write_category_workbook(
     from openpyxl.utils import get_column_letter
 
     order = ["hidden_states", "latent", "x0_hat", "velocity", "dinov2"]
-    statistics = ["speed", "curv", "ang", "accel", "perr"]
+    statistics = list(STATISTICS)
     sources = [s for s in order if any(c.source == s for c in cells)]
     sources += sorted({c.source for c in cells} - set(order))
     categories = sorted({c.category for c in cells})

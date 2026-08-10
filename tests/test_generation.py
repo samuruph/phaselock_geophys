@@ -301,7 +301,9 @@ def test_statistics_from_record_works_without_a_pair():
     rows = statistics_from_record(record, sample)
     assert rows and rows[0].scenario == "ball_drop"
     assert rows[0].violation == "", "generated clips have no violation"
-    assert set(rows[0].statistics) == {"speed", "curv", "ang", "accel", "perr"}
+    from phaselock.metrics.geophys import STATISTICS
+
+    assert set(rows[0].statistics) == set(STATISTICS)
 
 
 def test_spearman_endpoints_and_ties():

@@ -32,7 +32,10 @@ from typing import Literal
 
 import torch
 
-STATISTICS: tuple[str, ...] = ("speed", "curv", "ang", "accel", "perr")
+STATISTICS: tuple[str, ...] = (
+    "speed", "curv", "ang", "accel", "perr",
+    "energy", "momentum", "jerk",
+)
 
 ResidualFit = Literal["span", "ridge", "scalar"]
 
@@ -102,6 +105,30 @@ def turning_angles(trajectory: torch.Tensor) -> torch.Tensor:
     a = v[:-1] / _safe_norm(v[:-1]).unsqueeze(-1)
     b = v[1:] / _safe_norm(v[1:]).unsqueeze(-1)
     return 2.0 * torch.atan2(_safe_norm(a - b), _safe_norm(a + b))
+
+
+def kinetic_energy(trajectory: torch.Tensor) -> torch.Tensor:
+    """``E_t = 1/2 ||v_t||^2``, shape ``(T-1,)``.
+
+    A physics *analogy*, not physics: there is no mass and no metric in feature space, so
+    this is the squared speed with a conventional half. It is kept distinct from
+    ``phi_speed`` because squaring changes what the summary sees -- a standard deviation
+    of speeds weights a doubling and a halving alike, while energy weights the doubling
+    four times as heavily, which is the asymmetry an impulsive event produces.
+    """
+    return 0.5 * speeds(trajectory) ** 2
+
+
+def jerks(trajectory: torch.Tensor) -> torch.Tensor:
+    """``||j_t||``, the third difference, shape ``(T-3,)``.
+
+    Where acceleration is force, jerk is the *change* of force. Smooth dynamics have
+    bounded jerk; an impulse -- a teleport, a sudden freeze, a collision inserted by hand
+    -- is a discontinuity in acceleration and therefore a spike here. This is the closest
+    thing in the set to a detector for "something was applied to this object".
+    """
+    a = accelerations(_check(trajectory, 4))
+    return _safe_norm(a[1:] - a[:-1])
 
 
 def accelerations(trajectory: torch.Tensor) -> torch.Tensor:
@@ -232,8 +259,26 @@ def geophys_signals(
     trajectory = as_float(trajectory)
     s = speeds(trajectory)
     theta = turning_angles(trajectory)
-    accel = _safe_norm(accelerations(trajectory))
+    v = displacements(trajectory)
+    accel_vec = accelerations(trajectory)
+    accel = _safe_norm(accel_vec)
     resid = prediction_residuals(trajectory, order=order, fit=fit, ridge_lambda=ridge_lambda)
+
+    energy = 0.5 * s**2
+    # Coefficient of variation, not the raw spread: energy scales with the square of the
+    # feature magnitude, which differs by orders of magnitude between a VAE latent and a
+    # DiT hidden state, and an unnormalised spread would rank sources by their scale
+    # rather than by their dynamics.
+    energy_cv = _std(energy) / (energy.mean() + _EPS)
+
+    # Momentum persistence. Summing velocities telescopes to the net displacement, so
+    # ||sum v|| / sum ||v|| is how much of the path went somewhere against how far it
+    # travelled: 1 for a straight line, 0 for a round trip. Subtracted from 1 so that,
+    # like every other statistic here, larger means less regular.
+    total = _safe_norm(v.sum(dim=0), dim=-1) if v.ndim > 1 else v.abs().sum()
+    momentum = 1.0 - total / (s.sum() + _EPS)
+
+    jerk = _safe_norm(accel_vec[1:] - accel_vec[:-1]) if accel_vec.shape[0] > 1 else None
 
     statistics = {
         "speed": _std(s),
@@ -241,6 +286,9 @@ def geophys_signals(
         "ang": _std(theta),
         "accel": accel.pow(2).mean(),
         "perr": resid.mean(),
+        "energy": energy_cv,
+        "momentum": momentum,
+        "jerk": jerk.pow(2).mean() if jerk is not None else torch.zeros((), dtype=s.dtype),
     }
     return GeoPhysSignals(
         speed=s, turning_angle=theta, acceleration=accel, residual=resid, statistics=statistics

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from . import palette
+from ..metrics.geophys import STATISTICS
 
 CHANCE = 50.0
 
@@ -95,7 +96,7 @@ def source_comparison(
     has_external = any(s.source == "dinov2" for s in summaries)
     if has_external:
         sources = sources + ["dinov2"]
-    statistics = [n for n in ("speed", "curv", "ang", "accel", "perr", "alignment", "erosion")
+    statistics = [n for n in tuple(STATISTICS) + ("alignment", "erosion")
                   if any(s.statistic == n for s in summaries)]
     lookup = {(s.source, s.statistic): s for s in summaries}
 
@@ -476,7 +477,7 @@ def statistic_comparison(
     if not grouped:
         return None
 
-    singles = [n for n in ("speed", "curv", "ang", "accel", "perr") if n in grouped]
+    singles = [n for n in STATISTICS if n in grouped]
     coupling = [n for n in ("alignment", "erosion") if n in grouped]
     ensembles = [n for n in ("or", "majority") if n in grouped]
     names = singles + coupling + ensembles
@@ -814,7 +815,7 @@ def signal_profile(
     import matplotlib.pyplot as plt
     import numpy as np
 
-    names = [n for n in ("speed", "curv", "ang", "accel", "perr") if f"phi_{n}" in (statistics_rows[0] if statistics_rows else {})]
+    names = [n for n in STATISTICS if f"phi_{n}" in (statistics_rows[0] if statistics_rows else {})]
     if not names:
         return None
 
@@ -1043,7 +1044,7 @@ def category_table(
         return None
 
     order = ["hidden_states", "latent", "x0_hat", "velocity", "dinov2"]
-    statistics = ["speed", "curv", "ang", "accel", "perr"]
+    statistics = list(STATISTICS)
     sources = [s for s in order if any(c.source == s for c in cells)]
     sources += sorted({c.source for c in cells} - set(order))
     categories = sorted({c.category for c in cells})
@@ -1165,7 +1166,7 @@ def signal_quality_correlation(
     # how every other figure summarises depth and denoising time.
     pooled: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for row in statistics:
-        for name in ("speed", "curv", "ang", "accel", "perr"):
+        for name in STATISTICS:
             value = row.get(f"phi_{name}")
             if value not in (None, ""):
                 pooled[(row["source"], name)][row["sample_id"]].append(float(value))

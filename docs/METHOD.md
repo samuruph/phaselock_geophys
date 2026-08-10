@@ -121,6 +121,30 @@ On a pooled trajectory `Z ∈ R^{T×D}`:
 a distinction easy to lose, and the reason `speed` is a standard deviation rather than a
 mean.
 
+### Three physics-motivated additions
+
+Not from either paper. Every quantity above is geometric; these ask the same trajectory
+questions a physicist would, and are oriented the same way — larger means less plausible.
+
+| statistic | definition | what a violation looks like |
+|---|---|---|
+| `φ_energy` | `std({E_t}) / mean({E_t})`, `E_t = ½‖v_t‖²` | energy appearing or vanishing between frames. Distinct from `φ_speed` because squaring weights a doubling four times as heavily as a halving, which is the asymmetry an impulsive event produces |
+| `φ_momentum` | `1 − ‖Σ v_t‖ / Σ‖v_t‖` | 0 for a straight line, 1 for a round trip. How little of the path went anywhere |
+| `φ_jerk` | `mean({‖j_t‖²})`, `j_t` the third difference | acceleration is force, jerk is its *change*. A teleport, a freeze or an inserted collision is a discontinuity in acceleration and spikes here |
+
+**These are analogies, and calling them energy and momentum is suggestive naming rather
+than physics.** There is no mass, no metric and no gravity direction in a pooled feature
+space, so nothing here is a conserved quantity of an actual system — `φ_energy` is a
+squared speed with a conventional half, and `φ_momentum` is a straightness ratio. They are
+included because the *shape* of the question they ask is physical, and because the failure
+they are sensitive to (an impulse that no smooth dynamics would produce) is exactly what a
+hand-inserted violation is.
+
+**Potential energy is deliberately absent.** It needs a field, and feature space has no
+"up" and no reference configuration. Defining one — say a harmonic well about the
+trajectory's own mean — would be arbitrary, and an arbitrary choice that happened to
+detect violations would not be evidence of anything.
+
 ### Two deviations from the papers, both deliberate
 
 **`φ_perr` as written is degenerate.** The paper fits `P_H : R^{H·D} → R^D` on one video's
@@ -279,7 +303,7 @@ is missing from this table.
 All four are spatially mean-pooled **inside the forward hook**, per latent frame, giving
 one vector per latent frame. A raw hidden state is ~100 MB; pooled it is ~64 KB.
 
-### The 12 quantities computed on each trajectory
+### The quantities computed on each trajectory
 
 | kind | name | formula | reads as |
 |---|---|---|---|
@@ -288,6 +312,9 @@ one vector per latent frame. A raw hidden state is ~100 MB; pooled it is ~64 KB.
 | `phi` | `ang` | `std({θ_t})` | how *inconsistently* it turns |
 | `phi` | `accel` | `mean({‖a_t‖²})` | abrupt changes of motion |
 | `phi` | `perr` | `mean({‖ε_t‖})` | how much the clip surprises a predictor of its own past |
+| `phi` | `energy` | `std({E_t}) / mean({E_t})`, `E_t = ½‖v_t‖²` | how unevenly kinetic energy is spread over the clip |
+| `phi` | `momentum` | `1 − ‖Σ v_t‖ / Σ‖v_t‖` | how little of the path went anywhere — 0 for a straight line, 1 for a round trip |
+| `phi` | `jerk` | `mean({‖j_t‖²})`, `j_t` the third difference | impulsive events: a teleport or a freeze is a discontinuity in acceleration |
 | `phi` | `or` | `argmax_b │z_b│` over the five | ensemble: trust the most confident statistic |
 | `phi` | `majority` | `Σ_b z_b` over the five | ensemble: vote across all five |
 | `drift` | one per statistic | `ġ_σ = ⟨∇_z̄ φ_σ, ū_θ⟩` | is this denoising step *regularising* the trajectory (`<0`) or eroding it (`>0`)? |
@@ -371,11 +398,11 @@ reduce to that shape before any statistic is touched:
 
 | | shape | computation |
 |---|---|---|
-| `v_t` [`displacements`](../phaselock/metrics/geophys.py#L72) | `(T−1, D)` | `Z[1:] − Z[:−1]` |
-| `s_t` [`speeds`](../phaselock/metrics/geophys.py#L82) | `(T−1,)` | `‖v_t‖₂` |
-| `a_t` [`accelerations`](../phaselock/metrics/geophys.py#L107) | `(T−2, D)` | `v[1:] − v[:−1]`, i.e. the second difference of `Z` |
-| `θ_t` [`turning_angles`](../phaselock/metrics/geophys.py#L87) | `(T−2,)` | see below |
-| `ε_t` [`prediction_residuals`](../phaselock/metrics/geophys.py#L125) | `(T−order,)` | see below |
+| `v_t` [`displacements`](../phaselock/metrics/geophys.py#L75) | `(T−1, D)` | `Z[1:] − Z[:−1]` |
+| `s_t` [`speeds`](../phaselock/metrics/geophys.py#L85) | `(T−1,)` | `‖v_t‖₂` |
+| `a_t` [`accelerations`](../phaselock/metrics/geophys.py#L134) | `(T−2, D)` | `v[1:] − v[:−1]`, i.e. the second difference of `Z` |
+| `θ_t` [`turning_angles`](../phaselock/metrics/geophys.py#L90) | `(T−2,)` | see below |
+| `ε_t` [`prediction_residuals`](../phaselock/metrics/geophys.py#L152) | `(T−order,)` | see below |
 
 **`θ_t`, the turning angle.** Normalise both displacements, then take the half-angle form:
 
@@ -406,7 +433,7 @@ for why the paper's literal global fit is degenerate.
 
 **The five summaries.** `φ_speed = std({s_t})`, `φ_curv = mean({θ_t})`,
 `φ_ang = std({θ_t})`, `φ_accel = mean({‖a_t‖²})`, `φ_perr = mean({‖ε_t‖})` —
-[`geophys_statistics`](../phaselock/metrics/geophys.py#L250). Standard deviations are
+[`geophys_statistics`](../phaselock/metrics/geophys.py#L298). Standard deviations are
 **population**, not sample. Note again `accel` is squared and `perr` is not; that
 asymmetry is the paper's.
 
