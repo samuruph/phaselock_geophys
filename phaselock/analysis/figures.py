@@ -1238,7 +1238,9 @@ def signal_quality_correlation(
         f"working signal should fall as quality rises. This is a correlation between two "
         f"numbers per clip, not an accuracy: nothing is being counted."
     ))
-    figure.tight_layout(rect=(0, 0.05, 1, 1))
+    # No tight_layout: the gridspec already fixes the two-panel split, and letting
+    # tight_layout re-solve it warns and shifts the legend under the bars.
+    figure.subplots_adjust(bottom=0.10, top=0.94)
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, bbox_inches="tight", dpi=130)
     plt.close(figure)
