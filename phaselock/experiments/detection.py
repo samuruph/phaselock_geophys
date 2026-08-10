@@ -675,3 +675,78 @@ def score_ensembles(
         ).items():
             results[SignalKey(source, block, step, rule, kind)] = result
     return results
+
+
+@dataclass(frozen=True)
+class CategoryCell:
+    """One (source, statistic) summarised over the probe grid within one category."""
+
+    source: str
+    statistic: str
+    kind: str
+    category: str
+    mean: float
+    std: float
+    best: float
+    n_cells: int
+    n_pairs: int
+
+    def flatten(self) -> dict[str, Any]:
+        return {
+            "source": self.source, "statistic": self.statistic, "kind": self.kind,
+            "category": self.category, "mean": self.mean, "std": self.std,
+            "best": self.best, "n_cells": self.n_cells, "n_pairs": self.n_pairs,
+        }
+
+
+def score_by_category(
+    rows: Sequence[dict[str, Any]],
+    pairs: Sequence[VideoPair],
+    key: str = "scenario",
+    kind: str = "phi",
+    min_pairs: int = MIN_SCORABLE_PAIRS,
+) -> list[CategoryCell]:
+    """Accuracy per ``(source, statistic)`` broken out by violation category.
+
+    The aggregate answers "does this representation carry the signal"; this answers
+    *where it fails*, which the n=96 run showed is not uniform -- rigid-body scenarios
+    scored 100% while `river` sat at chance. A method that works everywhere and one that
+    works on half the physics have the same mean.
+
+    Summarised over the probe grid the same way as everywhere else: the mean across cells
+    is the honest number, the max is what a best-of-N search would find, and reporting one
+    without the other invites the selection error the whole project has been guarding
+    against.
+
+    Args:
+        key: ``"scenario"`` (12 groups on LikePhys) or ``"violation"`` (56, mostly with
+            too few pairs each to mean anything).
+    """
+    import statistics as stats_module
+
+    grouped: dict[str, list[VideoPair]] = defaultdict(list)
+    for pair in pairs:
+        grouped[getattr(pair, key)].append(pair)
+
+    cells: list[CategoryCell] = []
+    for category, subset in sorted(grouped.items()):
+        if len(subset) < min_pairs:
+            continue
+        # resamples=0: a bootstrap per category per cell would be tens of thousands of
+        # resamples for intervals nobody reads at this granularity. The spread across
+        # cells is what the table shows.
+        results = score_signals(rows, subset, resamples=0)
+        per_signal: dict[tuple[str, str], list[float]] = defaultdict(list)
+        for signal, result in results.items():
+            if signal.kind != kind:
+                continue
+            per_signal[(signal.source, signal.statistic)].append(result.accuracy)
+
+        for (source, statistic), values in per_signal.items():
+            cells.append(CategoryCell(
+                source=source, statistic=statistic, kind=kind, category=category,
+                mean=stats_module.mean(values),
+                std=stats_module.stdev(values) if len(values) > 1 else 0.0,
+                best=max(values), n_cells=len(values), n_pairs=len(subset),
+            ))
+    return cells

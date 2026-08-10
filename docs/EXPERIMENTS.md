@@ -9,14 +9,15 @@
 ```bash
 tmux new -s phaselock
 cd /home/ec2-user/code/phaselock
-scripts/experiments/run_all.sh 2>&1 | tee /data/experiments/run_$(date +%Y%m%d_%H%M).log
+scripts/experiments/run_all.sh
 ```
 
 Detach with `Ctrl-b d`, reattach with `tmux attach -t phaselock`.
 
-Progress bars go to **stderr** and the run's own output to stdout, so `tee` captures both
-on screen while the log stays readable afterwards. Set `PHASELOCK_NO_PROGRESS=1` to drop
-the bars entirely.
+**The run logs itself** to `<root>/<run_id>/run.log` while still printing to the terminal.
+Piping through `tee` by hand is easy to forget, and the one run you forget it on is the one
+you need the log for. Progress bars go to stderr; set `PHASELOCK_NO_PROGRESS=1` to drop
+them.
 
 ## Knobs
 
@@ -124,3 +125,7 @@ Both are CPU-only and take seconds.
 3. **The selection null** in `01_source_comparison.png`. A bar must clear the grey band
    and a diamond the dashed line — they are different floors for different statistics.
 4. **A `_pair.mp4`**, to confirm the violation survives preprocessing at all.
+5. **`figures/06_by_scenario.png`** and `category_scenario.csv`, which say *where* each
+   signal fails. The aggregate hides this: at n=96 the best cell scored 100% on four
+   scenarios and 50% on `river`. Use `--category violation` for the finer split, though
+   LikePhys's 56 violation types mostly have too few pairs each to mean anything.

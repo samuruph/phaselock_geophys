@@ -1016,3 +1016,103 @@ def render_all(
                                source=source, x_axis="step",
                                steps_to_timestep=steps_to_timestep))
     return written
+
+
+def category_table(
+    cells: Sequence[Any],
+    path: Path,
+    title: str = "Violation detection by category",
+    value_label: str = "pairwise accuracy (%)",
+) -> Optional[Path]:
+    """Signals down the rows, categories across, coloured red to green.
+
+    The aggregate says whether a representation carries the signal; this says *where it
+    fails*, and the n=96 run showed that is far from uniform -- rigid-body scenarios at
+    100% against `river` at chance. Two methods with the same mean can differ completely
+    here, which is the point of breaking it out.
+
+    Each cell reads ``mean +/- sd (max)``: the mean over the probe grid is the honest
+    number, the spread says whether it works everywhere or in patches, and the max is what
+    a best-of-N search would have found. Printing the max alone is the selection error
+    this project keeps having to guard against, so it is present but parenthesised.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    if not cells:
+        return None
+
+    order = ["hidden_states", "latent", "x0_hat", "velocity", "dinov2"]
+    statistics = ["speed", "curv", "ang", "accel", "perr"]
+    sources = [s for s in order if any(c.source == s for c in cells)]
+    sources += sorted({c.source for c in cells} - set(order))
+    categories = sorted({c.category for c in cells})
+    lookup = {(c.source, c.statistic, c.category): c for c in cells}
+
+    rows = [(src, stat) for src in sources for stat in statistics
+            if any((src, stat, cat) in lookup for cat in categories)]
+    if not rows:
+        return None
+
+    grid = np.full((len(rows), len(categories)), np.nan)
+    for r, (src, stat) in enumerate(rows):
+        for c, cat in enumerate(categories):
+            cell = lookup.get((src, stat, cat))
+            if cell is not None:
+                grid[r, c] = 100 * cell.mean
+
+    figure, axis = plt.subplots(
+        figsize=(1.05 * len(categories) + 4.2, 0.42 * len(rows) + 2.6)
+    )
+    # Diverging about chance, so 50% reads as "nothing" rather than as a colour. Clipped
+    # symmetrically: without it one 100% cell washes out every real difference.
+    image = axis.imshow(grid, cmap="RdYlGn", vmin=30, vmax=90, aspect="auto")
+
+    for r in range(len(rows)):
+        for c, cat in enumerate(categories):
+            cell = lookup.get((rows[r][0], rows[r][1], cat))
+            if cell is None:
+                continue
+            value = 100 * cell.mean
+            axis.text(c, r,
+                      f"{value:.0f}±{100*cell.std:.0f}\n({100*cell.best:.0f})",
+                      ha="center", va="center", fontsize=6.2,
+                      color="#111" if 40 < value < 82 else "#fff")
+
+    axis.set_xticks(np.arange(len(categories)), categories, rotation=35, ha="right",
+                    fontsize=8)
+    axis.set_yticks(np.arange(len(rows)),
+                    [palette.statistic_plain(s) for _, s in rows], fontsize=8)
+    axis.set_xticks(np.arange(len(categories) + 1) - 0.5, minor=True)
+    axis.set_yticks(np.arange(len(rows) + 1) - 0.5, minor=True)
+    axis.grid(which="minor", color=palette.SURFACE, linewidth=1.4)
+    axis.grid(which="major", visible=False)
+    axis.tick_params(which="minor", length=0)
+
+    # A rule and a label per source, so the block structure is visible rather than
+    # inferred from the repeating statistic names.
+    start = 0
+    for src in sources:
+        count = sum(1 for s, _ in rows if s == src)
+        if not count:
+            continue
+        if start:
+            axis.axhline(start - 0.5, color=palette.TEXT_PRIMARY, linewidth=1.8)
+        axis.text(-0.135, 1 - (start + count / 2) / len(rows), palette.source_label(src),
+                  transform=axis.transAxes, ha="center", va="center",
+                  fontsize=9, fontweight="bold", rotation=90)
+        start += count
+
+    figure.colorbar(image, ax=axis, fraction=0.022, pad=0.015, label=value_label)
+    axis.set_title(title, loc="left", pad=10)
+    palette.caption(figure, (
+        "Each cell is mean ± s.d. over the probe grid, with the single best cell in "
+        "parentheses. The mean is the number to read; the spread says whether the signal "
+        "works everywhere or only in patches, and the max is what a best-of-N search "
+        "would have found. 50% is chance."
+    ))
+    figure.tight_layout(rect=(0.10, 0.05, 1, 1))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, bbox_inches="tight", dpi=140)
+    plt.close(figure)
+    return path

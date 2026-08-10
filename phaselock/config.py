@@ -215,6 +215,34 @@ class Config:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True))
 
 
+def default_run_id(
+    limit: Optional[int] = None,
+    resolution: str = "",
+    label: str = "",
+    now: Optional[Any] = None,
+) -> str:
+    """A sortable, self-describing folder name for one invocation.
+
+    ``20260810_1030_n100_native``. Date first so a directory listing is chronological, then
+    the two settings that most often distinguish two runs of the same code -- how many
+    pairs, and at what geometry -- because those are exactly what you need to know when
+    looking at two result folders side by side.
+
+    Built here rather than in the shell so the format has one definition and a test.
+    """
+    import datetime
+
+    stamp = (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M")
+    parts = [stamp]
+    if limit is not None:
+        parts.append(f"n{limit}")
+    if resolution:
+        parts.append(resolution)
+    if label:
+        parts.append(label)
+    return "_".join(parts)
+
+
 def _coerce(value: Any, annotation: Any) -> Any:
     """Convert a string override to the field's declared type."""
     if not isinstance(value, str):

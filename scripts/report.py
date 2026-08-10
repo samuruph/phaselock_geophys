@@ -47,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kind", default="phi", choices=["phi", "drift"])
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--figures", action="store_true", help="also write PNG heatmaps")
+    parser.add_argument("--category", default="scenario", choices=["scenario", "violation"],
+                        help="grouping for the per-category breakdown")
     return parser.parse_args()
 
 
@@ -85,6 +87,48 @@ def main() -> None:
     heatmaps(rows, args.statistic, args.source, args.kind)
     if args.figures:
         write_figures(rows, args.run_dir, args.kind)
+        write_category_table(args.run_dir, args.category)
+
+
+def write_category_table(run_dir: Path, key: str) -> None:
+    """Where each signal succeeds and fails, as a figure and a spreadsheet.
+
+    The aggregate hides this: at n=96 the best cell scored 100% on four scenarios and
+    50% -- chance -- on `river`. A method that works on half the physics and one that
+    works everywhere have the same mean.
+    """
+    import csv as _csv
+    import json as _json
+
+    from phaselock.analysis import category_table
+    from phaselock.datasets import get_paired_dataset
+    from phaselock.experiments.detection import score_by_category
+
+    statistics = load(run_dir / "statistics.csv")
+    if not statistics:
+        return
+    config = _json.loads((run_dir / "config.json").read_text())
+    pairs = get_paired_dataset(config["data"]["name"]).select(
+        limit=config["data"]["limit"], seed=config["data"]["seed"])
+
+    cells = score_by_category(statistics, pairs, key=key)
+    if not cells:
+        print(f"  (no category breakdown: fewer than 2 pairs in every {key})")
+        return
+
+    table = run_dir / f"category_{key}.csv"
+    with open(table, "w", newline="") as handle:
+        writer = _csv.DictWriter(handle, fieldnames=list(cells[0].flatten()))
+        writer.writeheader()
+        writer.writerows(c.flatten() for c in cells)
+    print(f"  {table.name}")
+
+    produced = category_table(
+        cells, run_dir / "figures" / f"06_by_{key}.png",
+        title=f"Violation detection by {key}",
+    )
+    if produced:
+        print(f"  {produced.name}")
 
 
 def step_sweep_report(run_dir: Path, figures: bool) -> None:

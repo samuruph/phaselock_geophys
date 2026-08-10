@@ -26,9 +26,20 @@ ROOT="${ROOT:-/data/experiments/phaselock_geophys}"
 # One label for the whole invocation, computed ONCE here and passed to every stage. If a
 # stage computed its own, the gate and the inversion would land in different folders and
 # the report would not find its own baseline. Override to re-enter an existing run:
-#   RUN_ID=20260810_1030_n100 scripts/experiments/run_all.sh
-RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M)_n${N}_${RESOLUTION}}"
+#   RUN_ID=20260810_1030_n100_native scripts/experiments/run_all.sh
+#
+# The format lives in phaselock.config.default_run_id, not here: one definition, and a
+# test that pins it.
+RUN_ID="${RUN_ID:-$(python -c "from phaselock.config import default_run_id
+print(default_run_id($N, '$RESOLUTION'))")}"
 ID="output__run_id=$RUN_ID"
+
+# Log to the run's own folder. Piping through `tee` by hand is easy to forget, and the
+# one run you forget it on is the one you need the log for.
+mkdir -p "$ROOT/$RUN_ID"
+LOG="$ROOT/$RUN_ID/run.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "logging to $LOG"
 
 # Native 512x512 is the default because it measured *better*, not just faster: on a
 # matched 12-pair comparison it beat the letterboxed geometry on four of five statistics,

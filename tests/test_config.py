@@ -199,3 +199,38 @@ def test_resolution_override_must_stay_legal_for_the_patch_grid():
     assert multiple == 16
     for size in (512, 480, 832):
         assert size % multiple == 0, f"{size} is not a legal frame size"
+
+
+def test_default_run_id_is_sortable_and_self_describing():
+    """Date first so a listing is chronological, then the two settings that most often
+    distinguish two runs of the same code."""
+    import datetime
+
+    from phaselock.config import default_run_id
+
+    when = datetime.datetime(2026, 8, 10, 10, 30)
+    assert default_run_id(100, "native", now=when) == "20260810_1030_n100_native"
+    assert default_run_id(5, "letterbox", label="smoke", now=when) == \
+        "20260810_1030_n5_letterbox_smoke"
+    assert default_run_id(now=when) == "20260810_1030"
+
+
+def test_run_ids_sort_chronologically():
+    import datetime
+
+    from phaselock.config import default_run_id
+
+    early = default_run_id(100, "native", now=datetime.datetime(2026, 8, 9, 23, 59))
+    late = default_run_id(5, "native", now=datetime.datetime(2026, 8, 10, 0, 1))
+    assert early < late, "a listing must read in run order regardless of n"
+
+
+def test_run_id_becomes_the_leading_path_segment(tmp_path):
+    from phaselock.config import load
+
+    config = load(None, backend__name="wan21_t2v_1_3b", data__name="likephys",
+                  output__run_id="20260810_1030_n100", output__name="inversion",
+                  output__root=str(tmp_path))
+    assert config.output.base() == (
+        tmp_path / "20260810_1030_n100" / "wan21_t2v_1_3b" / "likephys" / "inversion"
+    )

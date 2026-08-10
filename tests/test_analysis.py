@@ -277,3 +277,46 @@ def test_source_comparison_axis_and_title_are_overridable(tmp_path):
     path = source_comparison(summaries, tmp_path / "s.png",
                              value_label="concordance (%)", title="Custom")
     assert path is not None and path.is_file()
+
+
+def _category_cells():
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class C:
+        source: str; statistic: str; kind: str; category: str
+        mean: float; std: float; best: float; n_cells: int; n_pairs: int
+
+    return [
+        C(src, stat, "phi", cat, 0.7, 0.05, 0.85, 300, 8)
+        for src in ("hidden_states", "latent", "dinov2")
+        for stat in ("speed", "accel", "perr")
+        for cat in ("ball_drop", "river", "flag")
+    ]
+
+
+def test_category_table_renders_every_source_and_category(tmp_path):
+    from phaselock.analysis.figures import category_table
+
+    path = category_table(_category_cells(), tmp_path / "c.png")
+    assert path is not None and path.is_file()
+
+
+def test_category_table_returns_none_when_empty(tmp_path):
+    from phaselock.analysis.figures import category_table
+
+    assert category_table([], tmp_path / "c.png") is None
+
+
+def test_score_by_category_skips_categories_below_the_pair_floor():
+    """One pair per category gives 0% or 100% by construction, so it is dropped."""
+    from phaselock.datasets import get_paired_dataset
+    from phaselock.experiments.detection import score_by_category
+
+    pairs = get_paired_dataset("likephys").select(limit=12, seed=0)
+    rows = [{"sample_id": p.plausible.sample_id, "source": "latent", "block": "-1",
+             "step": "0", "phi_accel": "1.0"} for p in pairs]
+    rows += [{"sample_id": p.violated.sample_id, "source": "latent", "block": "-1",
+              "step": "0", "phi_accel": "2.0"} for p in pairs]
+    # 12 pairs spread over 12 scenarios is one each -- all below the floor.
+    assert score_by_category(rows, pairs, key="scenario") == []
