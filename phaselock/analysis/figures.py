@@ -162,6 +162,7 @@ def source_comparison(
     # it is neither -- it is the spread of accuracy across probe cells.
     colours = axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize=8)
     axis.add_artist(colours)
+    glyph_legend = None
     if null is not None:
         from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
@@ -177,8 +178,8 @@ def source_comparison(
             Line2D([0], [0], color=palette.TEXT_MUTED, linestyle=(0, (2, 3)), linewidth=1.1,
                    label="dashed = a best-of-N pick needs to beat this"),
         ]
-        axis.legend(handles=glyphs, loc="upper center", bbox_to_anchor=(0.5, -0.24),
-                    ncol=2, fontsize=7.5)
+        glyph_legend = axis.legend(handles=glyphs, loc="upper center",
+                                   bbox_to_anchor=(0.5, -0.24), ncol=2, fontsize=7.5)
     axis.grid(axis="x", visible=False)
     # From zero: a bar encodes magnitude by length, so a truncated baseline exaggerates
     # differences. The chance line and the null bands carry the reference instead.
@@ -218,8 +219,19 @@ def source_comparison(
                       edgecolor=palette.GRID, linewidth=0.9),
         )
 
-    palette.caption(figure, note)
     figure.tight_layout(rect=(0, 0.22, 1, 0.90 if formula else 1))
+    # Only now is the axes its final size, and the legends are anchored in axes fractions:
+    # a legend measured before this occupies a *smaller* fraction than it ends up with, so
+    # a glyph legend placed from that measurement lands on the colour legend's last row.
+    # The statistic count grew from five to ten, which is what pushed it into a third row.
+    if glyph_legend is not None:
+        figure.canvas.draw()
+        glyph_legend.set_bbox_to_anchor(
+            (0.5, colours.get_window_extent()
+                  .transformed(axis.transAxes.inverted()).y0 - 0.04),
+            transform=axis.transAxes,
+        )
+    palette.caption(figure, note, below=glyph_legend or colours)
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path
@@ -245,7 +257,9 @@ def external_comparison(
     means = [100 * s.mean for s in summaries]
     stds = [100 * s.std for s in summaries]
 
-    figure, axis = plt.subplots(figsize=(7.0, 4.0))
+    # Widen with the statistic count. At five this fitted in 7 inches; at eight the names
+    # are long enough that they run into each other and into the caption.
+    figure, axis = plt.subplots(figsize=(max(7.0, 1.15 * len(names) + 2.2), 4.0))
     axis.bar(np.arange(len(names)), means, yerr=stds, capsize=3, width=0.6,
              color=palette.REFERENCE, error_kw={"elinewidth": 1.0, "ecolor": palette.TEXT_MUTED},
              zorder=3)
@@ -263,13 +277,16 @@ def external_comparison(
     axis.set_ylabel(value_label)
     axis.set_title("External baseline — frozen DINOv2 (the published GeoPhys method)")
     axis.grid(axis="x", visible=False)
+    # Lay out first, then caption: the caption clears the rotated tick labels by measuring
+    # where they actually end, which is only knowable once the axes is in its final place.
+    figure.tight_layout()
     palette.caption(
         figure,
         f"Bar = mean over all {summaries[0].n_cells} readout layers; error bar = 1 s.d.; "
         "diamond = best layer. This is the correctness gate: GeoPhys reports 77.6-80.8% "
         f"for a single backbone on LikePhys.\n{pooling_note(pooling, temporal_ratio)}",
+        below=axis,
     )
-    figure.tight_layout(rect=(0, 0.04, 1, 1))
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
     return path

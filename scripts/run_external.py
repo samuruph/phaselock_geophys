@@ -55,7 +55,14 @@ def parse_args() -> argparse.Namespace:
                         help="'latent' averages frames over each latent's group, matching the "
                              "causal VAE so the trajectory length equals the internal path's")
     parser.add_argument("overrides", nargs="*")
-    return parser.parse_args()
+    # parse_known_args, not parse_args: argparse fills a positional nargs="*"
+    # from the FIRST run of positionals it meets and rejects any later run, so an
+    # override that lands after a flag kills the whole stage with "unrecognized
+    # arguments". Leftovers are still validated by parse_overrides, which rejects
+    # anything that is not section__key=value.
+    args, extra = parser.parse_known_args()
+    args.overrides = list(args.overrides) + extra
+    return args
 
 
 def main() -> None:

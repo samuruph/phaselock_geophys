@@ -101,10 +101,14 @@ fi
 # ---- C. Generation. Needs image-to-video, and CogVideoX-5B-I2V is the only one that
 #         fits a 46 GB card -- Wan's I2V is 14B.
 if has C; then
+  # Every `key=value` override must sit in ONE run at the end. argparse fills the
+  # positional `overrides` list from the first group it meets and then rejects the
+  # second, so `--save-videos $GEO --verifier-source ... data__limit=...` dies with
+  # "unrecognized arguments" -- which is how this stage produced nothing at n=100.
   step "C1 generation" \
-    python scripts/run_generation.py --config $GEN --save-videos $GEO \
+    python scripts/run_generation.py --config $GEN --save-videos \
       --verifier-source hidden_states --verifier-statistic perr \
-      data__limit=$N generation__num_candidates=1 probe__save_trajectories=true $ID
+      data__limit=$N generation__num_candidates=1 probe__save_trajectories=true $GEO $ID
   step "C2 generation report" \
     python scripts/report.py $ROOT/$RUN_ID/cogvideox_5b_i2v/likephys/generation --figures
   step "C3 generation overlays" \

@@ -241,9 +241,33 @@ def annotate_chance(axis, value: float = 50.0, horizontal: bool = False) -> None
         )
 
 
-def caption(figure, text: str) -> None:
-    """One line under the figure saying what the reader should take from it."""
+def caption(figure, text: str, below=None) -> None:
+    """One line under the figure saying what the reader should take from it.
+
+    ``below``: an axes whose x tick labels the caption must clear, or any artist (a legend)
+    it must sit under. Rotated labels reach well past the axes box and a legend hangs below
+    it, so a caption pinned to the figure bottom prints straight through them. Since
+    ``savefig(bbox_inches="tight")`` grows the saved canvas to include text placed at a
+    negative y, clearing them costs nothing but the measurement -- so pass the artist
+    rather than guessing a margin that goes stale when the content changes.
+
+    Measure *after* the final ``tight_layout``: it resizes the axes, and anything anchored
+    in axes fractions occupies a different fraction once it has.
+    """
+    y, align = 0.005, "bottom"
+    if below is not None:
+        figure.canvas.draw()
+        inverse = figure.transFigure.inverted()
+        bottoms = []
+        for item in (below if isinstance(below, (list, tuple)) else [below]):
+            if hasattr(item, "get_xticklabels"):
+                bottoms += [label.get_window_extent().transformed(inverse).y0
+                            for label in item.get_xticklabels() if label.get_text()]
+            else:
+                bottoms.append(item.get_window_extent().transformed(inverse).y0)
+        if bottoms:
+            y, align = min(bottoms) - 0.045, "top"
     figure.text(
-        0.01, 0.005, text, ha="left", va="bottom",
+        0.01, y, text, ha="left", va=align,
         fontsize=8, color=TEXT_MUTED, wrap=True,
     )

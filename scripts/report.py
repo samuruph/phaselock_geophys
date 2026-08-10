@@ -47,9 +47,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kind", default="phi", choices=["phi", "drift"])
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--figures", action="store_true", help="also write PNG heatmaps")
-    parser.add_argument("--category", default="family",
+    # Both by default. Family survives a small draw where scenario does not, but at n=100
+    # every scenario has 8-9 pairs and the finer table is the more useful one -- so which
+    # is worth reading depends on the run, and both are cheap once the signals are scored.
+    parser.add_argument("--category", default=["family", "scenario"], nargs="+",
                         choices=["family", "scenario", "violation"],
-                        help="grouping for the per-category breakdown")
+                        help="grouping(s) for the per-category breakdown")
     # A run written before a statistic existed can be rebuilt from its trajectories by
     # scripts/rescore_trajectories.py. Pointing at that output beats copying it over the
     # original, which loses the numbers the run actually reported.
@@ -94,7 +97,8 @@ def main() -> None:
     heatmaps(rows, args.statistic, args.source, args.kind)
     if args.figures:
         write_figures(rows, args.run_dir, args.kind, args.statistics)
-        write_category_table(args.run_dir, args.category, args.statistics)
+        for key in args.category:
+            write_category_table(args.run_dir, key, args.statistics)
 
 
 def write_category_table(run_dir: Path, key: str,

@@ -116,11 +116,18 @@ def generate_candidate(
     """Condition on the clip's first frame, generate, and score against the real rest."""
     from PIL import Image
 
+    from .detection import frame_geometry
+
     scenario = sample.meta["scenario"]
     reference = reference_continuation(sample, backend, blur_sigma=0.0, config=config)
     first_frame = Image.fromarray(
         (reference[0].permute(1, 2, 0) * 255).byte().cpu().numpy()
     )
+
+    # The reference is loaded at the configured geometry; the generator must be told the
+    # same one or it silently falls back to the backend default and every downstream
+    # comparison dies on shape. Both arms, one source of truth.
+    _, height, width = frame_geometry(backend.spec, config)
 
     steps = num_steps if num_steps is not None else config.generation.num_steps
     result = generate_with_probes(
@@ -128,6 +135,8 @@ def generate_candidate(
         prompt=dataset.prompt_for(scenario),
         image=first_frame,
         num_steps=steps,
+        height=height,
+        width=width,
         record_steps=config.probe.record_steps,
         sources=config.probe.sources,
         blocks=config.probe.blocks,

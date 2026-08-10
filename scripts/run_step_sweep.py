@@ -41,6 +41,7 @@ from phaselock.backends import load_backend
 from phaselock.config import parse_overrides
 from phaselock.datasets import LikePhys
 from phaselock.encoders import DINOv2Encoder
+from phaselock.experiments.detection import frame_geometry
 from phaselock.experiments.generation import frames_to_tensor, reference_continuation
 from phaselock.experiments.step_sweep import (
     DEFAULT_BLUR,
@@ -63,7 +64,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--encoder", default="facebook/dinov2-large")
     parser.add_argument("--layer", type=int, default=None, help="DINOv2 readout layer")
     parser.add_argument("overrides", nargs="*")
-    return parser.parse_args()
+    # parse_known_args, not parse_args: argparse fills a positional nargs="*"
+    # from the FIRST run of positionals it meets and rejects any later run, so an
+    # override that lands after a flag kills the whole stage with "unrecognized
+    # arguments". Leftovers are still validated by parse_overrides, which rejects
+    # anything that is not section__key=value.
+    args, extra = parser.parse_known_args()
+    args.overrides = list(args.overrides) + extra
+    return args
 
 
 def main() -> None:
@@ -102,6 +110,10 @@ def main() -> None:
         reference = reference_continuation(clip, backend, config=config)
         first_frame = Image.fromarray((reference[0].permute(1, 2, 0) * 255).byte().cpu().numpy())
         scenario = clip.meta["scenario"]
+        # Same geometry on both arms. The reference honours data.height/width; without
+        # passing it on, the generator falls back to the backend default and measure_cell
+        # rejects the pair on shape -- which is exactly how this stage died at n=100.
+        _, height, width = frame_geometry(backend.spec, config)
 
         for num_steps in steps:
             result = generate_with_probes(
@@ -109,6 +121,8 @@ def main() -> None:
                 prompt=dataset.prompt_for(scenario),
                 image=first_frame,
                 num_steps=num_steps,
+                height=height,
+                width=width,
                 record_steps=min(config.probe.record_steps, num_steps),
                 sources=config.probe.sources,
                 blocks=config.probe.blocks,
