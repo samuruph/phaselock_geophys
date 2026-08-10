@@ -22,12 +22,10 @@ and `φ_jerk` columns were rebuilt from that run's saved trajectories with
 `scripts/rescore_trajectories.py` — those three statistics did not exist when it started —
 and live in `statistics_rescored.csv` beside the original. Nothing else was recomputed.
 
-Written 2026-08-08. The 96-pair Wan run behind §3-§6 predates a rename of the stage from
-`detection` to `inversion` (the name now says where the trajectory came from, since GeoPhys
-statistics and pairwise scoring happen in every stage). That run is kept under
-`_archive/pre_restart_*/wan21_t2v_1_3b/likephys/detection`; the re-run lands at
-`wan21_t2v_1_3b/likephys/inversion`. Reproduce with
-`python scripts/report.py <run_dir> --figures`.
+Updated 2026-08-10 against the n=100 native-resolution run. Earlier 96-pair numbers, and
+the runs behind them, are kept under `_archive/`. Reproduce any table or figure with
+`python scripts/report.py <run_dir> --figures`, which writes the per-family and
+per-scenario breakdowns together.
 
 ### Reading the fidelity numbers: dB, and the "VAE ceiling"
 
@@ -100,9 +98,9 @@ already answered that for frozen external encoders. It is **which representation
 the geometry**, and in particular whether a video diffusion model's own internals carry
 it better than an external encoder does.
 
-For each of 173 LikePhys clips (96 matched plausible/violated pairs):
+For each of 200 LikePhys clips (100 matched plausible/violated pairs):
 
-1. decode, resample 60 → 81 frames, letterbox 512×512 → 480×832
+1. decode, resample 60 → 81 frames, keep the native 512×512 square
 2. VAE-encode → 21 latent frames × 16 channels (Wan's causal VAE folds 4 video frames
    into each latent after the first)
 3. **invert** the flow-matching sampler from the clean latent toward noise, 50 steps,
@@ -252,7 +250,7 @@ hidden states fall back to a finite difference across consecutive recorded steps
 
 ### The selection null — read this before reading any number
 
-3800 signals were scored on 96 pairs. Reporting the best one is not a result; with that
+2640 signals were scored on 100 pairs. Reporting the best one is not a result; with that
 many candidates a sizeable accuracy arises from noise alone.
 
 So the labels are shuffled — which member of each pair is "violated" is randomised — every
@@ -356,39 +354,42 @@ representations*, so it is a property of the readout, not of the videos.
 
 ### 5.1 The signal is real, and it is carried by the prediction residual
 
-`φ_perr` on hidden states averages **72.1%** across all 300 probe cells with a standard
-deviation of **3.0**. That tight spread is the important part: it is not one lucky cell but
+`φ_perr` on hidden states averages **75.3%** across all 300 probe cells with a standard
+deviation of **3.2**. That tight spread is the important part: it is not one lucky cell but
 a property of nearly every block and denoising step. A best-of-N artifact does not look
 like that.
 
-`φ_accel` reaches a higher single cell (85.4%) but varies far more (±6.7), so it is the
-more selection-sensitive of the two.
+`φ_accel` and `φ_jerk` both reach a higher single cell (87.0%) but vary far more (±7.0 and
+±6.7), so they are the more selection-sensitive of the three. The top six cells overall are
+all hidden states, and all are `φ_accel` or `φ_jerk` at blocks 5-16, steps 4-5 — the middle
+of the network, early in the inversion.
 
 ### 5.2 The five statistics swap roles between representations
 
-`φ_speed` lands **below chance on every internal source** — 43.7%, 37.7%, 42.2%, 46.5%.
-Below chance is not noise; it means the ranking is systematically inverted, and violated
-clips have *more regular* pooled step sizes than plausible ones. `φ_curv` and `φ_ang` sit
-at chance internally.
+`φ_speed` sits **at chance on every internal source** — 49.4%, 46.6%, 47.4%, 50.9% — as do
+`φ_curv` and `φ_ang`. At the earlier letterboxed geometry `φ_speed` read clearly below
+chance; the native 512×512 run moved it back to chance, which is one reason the resolution
+change mattered beyond speed. The statistic that *is* systematically inverted at n=100 is
+`φ_energy` (§5.4), not `φ_speed`.
 
 On DINOv2, at the same 21-point temporal resolution, the ordering is almost exactly
 reversed:
 
 | statistic | DiT hidden states | DINOv2 |
 |---|---|---|
-| `φ_perr` | **72.1** | 54.4 *(its worst)* |
-| `φ_accel` | 66.7 | 63.9 |
-| `φ_ang` | 49.4 | 64.5 |
-| `φ_curv` | 49.3 | 63.5 |
-| `φ_speed` | 43.7 *(its worst)* | **65.4** |
+| `φ_perr` | **75.3** | 54.9 *(its worst)* |
+| `φ_accel` | 70.7 | 63.9 |
+| `φ_ang` | 49.8 | 63.4 |
+| `φ_curv` | 49.6 | 61.8 |
+| `φ_speed` | 49.4 *(its worst)* | **65.3** |
 
 Each representation's **best** statistic is close to the other's **worst**. This was
 initially suspicious — the unpooled DINOv2 run was 4× finer in time, and `φ_speed` is the
 statistic most sensitive to sampling rate — so it could have been a pooling artifact. It
 is not: the table above is temporally matched.
 
-DINOv2 also spreads its signal fairly evenly across four statistics (63.5–65.4), while the
-internal path concentrates it in one (72.1) and actively harms itself with another. The
+DINOv2 also spreads its signal fairly evenly across every statistic (53–65), while the
+internal path concentrates it in two (75.3 and 70.7) and leaves three at chance. The
 GeoPhys five are not a portable set; *which* geometric channel carries plausibility is a
 property of the representation, not of physics.
 
@@ -402,7 +403,7 @@ breaks under implausible physics is *predictability* — which is what `φ_perr`
 
 The Invisible Hand reports linear probes at 48–53% on VAE latents — chance — and that
 result is load-bearing for their argument. Here, **geometry on the same latents reaches
-69.5 ± 1.9%** with `φ_perr`.
+72.6 ± 3.6%** with `φ_perr`.
 
 That is not a contradiction, it is a difference in readout: a linear probe asks whether
 plausibility is linearly separable in latent space; `φ_perr` measures a nonlinear
@@ -412,8 +413,8 @@ linearly available.
 **This matters for PhaseLock.** PhaseLock's latent delta `T(z)` *is* the GeoPhys
 first-order velocity, computed in exactly this space. The result above says that space is
 not empty — but it also says the first-order term is the *worst* place to look
-(`φ_speed`, 37.7%), while the residual and acceleration terms PhaseLock never touches
-carry 69.5% and 63.0%.
+(`φ_speed`, 46.6% — below chance), while the residual and acceleration terms PhaseLock
+never touches carry 72.6% and 67.3%, and the third-derivative `φ_jerk` carries 67.2%.
 
 ### 5.4 The additions: the coupling metrics fail, two of three physics statistics work
 
@@ -538,23 +539,26 @@ Listed worst-first.
 
 1. **The internal and external paths select from very different pools.** The matched
    comparison of *means* (§5.2) is sound. The comparison of *maxima* is not symmetric:
-   the internal best cell is chosen from 1500 candidates and DINOv2's from 125, so the
-   85.4% and 74.0% figures carry different selection burdens even though both clear
+   the internal best cell is chosen from 2640 candidates and DINOv2's from 200, so the
+   87.0% and 74.0% figures carry different selection burdens even though both clear
    their own null. Prefer the means when quoting a margin.
 
 2. **Inverted video is not generated video.** GeoPhys evaluates real and generated clips
    through a feature extractor. This stage evaluates *inverted* real clips, which requires
    the recovered trajectory to be the one the model would have taken. Reconstruction is
-   42.6 dB against a 49.7 dB VAE ceiling, which rules out a broken inversion but does not
+   41.3 dB against a 49.7 dB VAE ceiling, which rules out a broken inversion but does not
    establish trajectory fidelity — the Invisible Hand explicitly reports probe accuracy
    collapsing 0.82 → 0.57 between 100 and 20 steps while reconstruction still looks fine.
    **`inversion__num_steps` has not been swept.**
 
-3. **One backend, one dataset.** Wan2.1-1.3B on LikePhys. IntPhys2 has not run, and its
-   636 → 81 frame decimation is a 7.85× subsample that can step over a brief violation
-   entirely — unlike LikePhys, whose 60 → 81 is an *upsample* that drops nothing.
+3. **One backend for the headline.** Wan2.1-1.3B on LikePhys. IntPhys2 has now run
+   (§5.4) and lands near chance everywhere, which is consistent with its published
+   difficulty but means §4 does not generalise as measured. Its 636 → 81 frame
+   decimation is a 7.85× subsample that can step over a brief violation entirely —
+   unlike LikePhys, whose 60 → 81 is an *upsample* that drops nothing — so `window=0.5`
+   keeps the centre 5.3 s. The CogVideoX track is still running.
 
-4. **96 pairs.** Individual cells carry ±8–10 point confidence intervals. The 300-cell
+4. **100 pairs.** Individual cells carry ±8–10 point confidence intervals. The 300-cell
    means are far tighter, which is why they are the headline.
 
 5. **Preprocessing is shared but not neutral.** Letterboxing leaves 42% of every frame
@@ -569,22 +573,26 @@ Listed worst-first.
 ## 7. Where this leaves the research question
 
 **Does GeoPhys geometry transfer to internal representations?** Partly, and selectively.
-Two of the five statistics transfer and one of those is strong and stable across the whole
-network; two are useless and one is inverted. The transfer is not a property of "the
-GeoPhys method" but of specific statistics.
+Two of the five transfer, plus `φ_jerk` of the three additions, and `φ_perr` is strong and
+stable across the whole network; three sit at chance and `φ_energy` is inverted on
+LikePhys. The transfer is not a property of "the GeoPhys method" but of specific
+statistics.
 
 **Which internal representation carries it best?** DiT hidden states, but the margin over
 the VAE latent is smaller than the Invisible Hand's linear-probe results would predict
-(72.1% vs 69.5%). The interesting finding is not the ranking but that the VAE latent is
+(75.3% vs 72.6%). The interesting finding is not the ranking but that the VAE latent is
 *not* at chance under a geometric readout.
 
 **Is the coupled-velocity family worth it?** On this evidence, no. Reported as a negative
 result rather than dropped.
 
 **Does internal beat external?** Yes, on the strongest channel of each, temporally
-matched on the same 96 pairs: **72.1 ± 3.0** (`φ_perr` on hidden states, averaged over 300
-cells) against **65.4 ± 6.7** (`φ_speed` on DINOv2, averaged over 25 layers). The best
-single cells are 85.4% and 74.0%, though those are selected from unequal pools.
+matched on the same 100 pairs: **75.3 ± 3.2** (`φ_perr` on hidden states, averaged over 300
+cells) against **65.3 ± 6.7** (`φ_speed` on DINOv2, averaged over 25 layers). The best
+single cells are 87.0% and 74.0%, though those are selected from unequal pools.
+
+On **IntPhys2** the same comparison gives 57.1% against 48.5%, so the ordering survives
+but the margin nearly vanishes with the absolute level (§5.4).
 
 The more interesting answer is that the two do not merely differ in strength — they read
 plausibility through *different geometric channels* (§5.2), and each is near-useless in
