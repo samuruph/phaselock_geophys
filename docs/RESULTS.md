@@ -6,14 +6,16 @@
 > Updated 2026-08-10 against the n=100 native-resolution run. Earlier runs are under
 > `_archive/`.
 
-## In three sentences
+## In four sentences
 
-**A video diffusion model's own internals carry physical plausibility better than a frozen
-image encoder does — but only through two of the eight geometric channels, and only on
-LikePhys.** `φ_perr` on DiT hidden states reaches 75.3% pairwise accuracy against DINOv2's
-best of 65.3%, while three of GeoPhys's five statistics sit at chance internally and score
-61–65% externally. On IntPhys2 nothing clears 57%, so the headline is a LikePhys result
-rather than a general one.
+**A video diffusion model's own internals separate physically implausible video from
+plausible video better than a frozen image encoder does — but most of that separation is
+one effect, not eight.** A single scalar, how far the pooled trajectory moves per frame,
+reaches 73.8% on DiT hidden states; of GeoPhys's five statistics only `φ_perr` measures
+anything beyond it (58.2% after the scale is divided out, against a 52.1% floor), and
+three sit at chance. The headline number is `φ_perr` at **75.3%** against DINOv2's best of
+**65.3%**, temporally matched on the same 100 pairs. On IntPhys2 nothing clears 57%, so
+all of this is a LikePhys result rather than a general one.
 
 ## Which model produced which number
 
@@ -78,7 +80,8 @@ spread is the important part: not one lucky cell but a property of nearly every 
 denoising step. A best-of-N artefact does not look like that.
 
 `φ_accel` (70.7) and `φ_jerk` (68.8) follow, and both reach higher single cells (87.0) with
-more spread — so they are the more selection-sensitive.
+more spread — so they are the more selection-sensitive. **§4b shows both are mostly the
+scale effect**; `φ_perr` is the only one that survives dividing it out.
 
 ### 2. The internal and external profiles are shaped differently, and nearly inverted
 
@@ -95,35 +98,102 @@ state, so what breaks under implausible physics is *predictability* — which is
 
 That points at **combining** them rather than choosing, which nothing here has tested.
 
-### 3. `φ_jerk` is the one addition that paid off
+### 3. `φ_jerk` is the strongest addition, but see §4b before believing it
 
 68.8 / 67.2 / 72.2 / 69.0 across the four internal sources — ahead of every GeoPhys shape
-statistic, and the only signal that is strong on *all four* sources rather than one. That
-is what you would expect if discontinuity is what violations actually introduce.
+statistic, and strong on *all four* sources rather than one. The scale control in §4b says
+almost all of that is the magnitude effect rather than discontinuity, so it is not
+independent evidence.
 
 `φ_momentum` is a weak positive (55–60%). The three **coupling** metrics — geometric drift,
 transport alignment, erosion rate — are a measured negative at 54–59%, below the plain
 statistics they were built from. The commutation identity is still correct; as detectors the
 coupled quantities carry less than the uncoupled ones.
 
-### 4. `φ_energy` is inverted on LikePhys — and IntPhys2 says do not flip it
+### 4. Most of the signal is one thing: violated clips travel further in feature space
 
-28.5 / 31.5 / 31.1 / 29.7 across four readouts that share no parameters: roughly 20 points
-*below* chance, in the same direction. A statistic with no signal sits at 50 with scatter;
-this does not. It carries as much as a good detector and points the wrong way.
+This is the finding that reframes the rest, and it came from asking why `φ_energy` reads
+*below* chance. Reproduce with `scripts/scale_control.py <run_dir>`.
 
-The reading: **plausible motion varies its kinetic energy more than violated motion does.**
-Real dynamics trade energy continuously — a ball decelerating into a bounce, cloth settling.
-LikePhys injects violations by editing motion toward something uniform, which *flattens* the
-energy profile.
+Decompose the trajectory into how far it moves and what shape it makes. On hidden states,
+over the probe grid:
 
-**The obvious fix is wrong.** Flipping the sign would give ≈70% on LikePhys, third-best
-overall. On IntPhys2 `φ_energy` is 55–57%, *above* chance in the same four readouts — so
-flipping would have turned a 55% signal into a 45% one on held-out data. The inversion is a
-property of how LikePhys builds violated clips, not of the statistic. Reported unflipped.
+| quantity | accuracy | what it is |
+|---|---|---|
+| `mean(‖v_t‖)` | **73.8 ± 6.2** | the scale — mean step length, equivalently path length |
+| `std(‖v_t‖)` = `φ_speed` | 49.2 ± 6.4 | the spread, with the scale removed |
+| `std(‖v_t‖)/mean(‖v_t‖)` | **28.6 ± 6.7** | the same spread, divided by the scale |
+| `φ_energy` = `std(E)/mean(E)` | **28.1 ± 6.1** | the same ratio on `E = ½‖v‖²` |
 
-DINOv2 scores 63.8% on the same statistic over the same clips, so the sign is also a
-property of the readout, not of the videos.
+**A single scalar — how far the pooled trajectory moves per frame — is a 73.8% detector**,
+and it is not one of the eight. The *spread* around it carries nothing (49.2%, chance).
+
+That settles `φ_energy`. It is a coefficient of variation: a numerator at chance over a
+denominator that is a strong detector. Dividing by a discriminative quantity inverts the
+ratio, mechanically. **No energy-exchange story is needed, and the one this document gave
+earlier was wrong** — `φ_energy` and `std(‖v‖)/mean(‖v‖)` agree to within 0.5 points, and
+the latter contains no notion of energy at all.
+
+It also explains `φ_speed`, which GeoPhys defines as `std({‖v_t‖})`. **That definition
+discards the mean, which is where all the signal is** — hence chance, on every source.
+
+### 4b. What survives the scale control
+
+Dividing each statistic by the power of `mean(‖v_t‖)` it carries by definition:
+
+| statistic | raw | scale-normalised | verdict |
+|---|---|---|---|
+| `φ_perr` | 75.4 | **58.2** | keeps a real margin over the 52.1% floor |
+| `φ_accel` | 70.5 | 44.4 | scale, and the correction overshoots |
+| `φ_jerk` | 68.7 | 51.6 | scale |
+| `φ_momentum` | 59.2 | 59.2 | already scale-free |
+| `φ_curv`, `φ_ang` | ~49.7 | unchanged | already scale-free, and at chance |
+
+**`φ_perr` is the only statistic that measures something beyond how far the trajectory
+moved** — and even it loses 17 points to the control. `φ_accel` and `φ_jerk` are the scale
+effect re-measured; their apparent strength in the headline table is not independent
+evidence.
+
+This does not make the detector worse — 73.8% from one scalar is a real result, and
+`φ_perr` still adds to it. It makes the *interpretation* narrower: the dominant effect is
+that these clips move differently in magnitude, not that the model's geometry encodes
+plausibility in the way GeoPhys's five statistics were designed to capture.
+
+**Whether the scale effect is itself a confound is untested.** Violated clips could move
+further in feature space because a violation is an abrupt event, or because the edit that
+created them changed the clips in some visually trivial way. Separating those needs a
+control this run does not have.
+
+### 4c. Where along the denoising trajectory the signal lives
+
+Accuracy on hidden states, meaned over all 30 blocks, by recorded step. `t = 0` is the
+clean video, `t = 993` is nearly pure noise:
+
+| t | 0 | 251 | 459 | 586 | **702** | 779 | 853 | 904 | 956 | 993 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `φ_perr` | 72.7 | 75.0 | 75.9 | 76.1 | 72.9 | 73.9 | 74.9 | 76.6 | 77.1 | **78.0** |
+| `φ_accel` | 69.9 | 65.0 | 64.9 | 70.2 | **81.2** | 77.4 | 74.4 | 71.3 | 67.0 | 65.7 |
+| `φ_jerk` | 67.7 | 64.2 | 64.2 | 69.2 | **80.4** | 75.6 | 72.5 | 69.0 | 63.7 | 61.8 |
+
+**Not at the clean end.** `φ_accel` and `φ_jerk` peak in the *middle* of the trajectory
+(81.2% and 80.4% at `t ≈ 702`), and `φ_perr` is at its weakest there and strongest near
+noise. The derivative statistics want a partly-noised latent; the residual wants either
+end.
+
+`05_signal_profile_time` appears to say otherwise — its plausible/violated gap looks widest
+near `t = 0` — and it does not. Two reasons, both of which make that figure unusable for
+judging effect size:
+
+- **It plots the raw statistic, which is largest near the clean end.** Every one of these
+  grows with the trajectory's scale (§4), and the trajectory moves furthest while the
+  latent still holds real content. Absolute gap and absolute value shrink together toward
+  noise; the *relative* gap does not follow.
+- **The line and band are unpaired; the accuracy is paired.** Bands that overlap almost
+  entirely still give 75%, because a pair's two clips share a scenario and cancel most of
+  that spread. The figure shows between-clip variance, which pairing removes.
+
+Read `02_depth_profile` and `03_depth_vs_time` for separation by depth and step. The
+caption on `05_signal_profile_time` now says this.
 
 ### 5. The VAE latent is not physics-free
 
@@ -176,24 +246,34 @@ Worst first.
 4. **One backend for the headline.** CogVideoX is still running, and at a different
    resolution when it lands.
 
-5. **Orientation is assumed, not fitted.** Every signal is scored as "larger = less
+5. **The dominant effect may be a confound.** §4 shows 73.8% comes from how far the
+   trajectory moves, and nothing here establishes *why* violated clips move further. An
+   abrupt physical event would do it; so would a systematic visual difference introduced by
+   whatever edit produced the violated clip. LikePhys renders its violated clips rather
+   than editing footage, which makes the second less likely but does not rule it out. The
+   test is a matched control on clips that differ in motion magnitude without differing in
+   plausibility.
+
+6. **Orientation is assumed, not fitted.** Every signal is scored as "larger = less
    plausible". That is justified for the five shape statistics; `φ_energy` shows what happens
    when it is not, and the drift and alignment values have no principled orientation at all.
    A below-50% number is discrimination with an inverted sign, not absence of signal.
 
-6. **100 pairs.** Individual cells carry ±8–10 point confidence intervals. Trust the
+7. **100 pairs.** Individual cells carry ±8–10 point confidence intervals. Trust the
    *structure* — a smooth peak across neighbouring blocks and steps — over any single
    winning cell, which is what the depth heatmaps are for.
 
-7. **Everything is correlational.** Geometry separating violated from plausible says the
+8. **Everything is correlational.** Geometry separating violated from plausible says the
    representation carries a usable statistical signature, not that the model represents
    physics.
 
 ## Where this leaves the research question
 
 **Does GeoPhys's geometric readout transfer to a video diffusion model's internals?**
-Partly. Two of the five transfer, plus `φ_jerk` of the three additions. The transfer is not
-a property of "the GeoPhys method" but of specific statistics.
+Weakly, and less than the headline table suggests. After the scale control only `φ_perr`
+measures anything beyond trajectory magnitude, at 58.2% against a 52.1% floor. The
+representation does separate the classes well — 75.3% — but mostly through a quantity none
+of GeoPhys's five statistics is designed to capture, and `φ_speed` explicitly discards.
 
 **Which representation carries it best?** DiT hidden states for `φ_perr`, but the **flow
 velocity** `u_θ` wins on `φ_accel` and `φ_jerk` — so the answer depends on the statistic.
@@ -204,8 +284,10 @@ would predict (75.3 vs 72.6).
 the same pairs: **75.3 ± 3.2** against **65.3 ± 6.7**. On IntPhys2 the ordering survives but
 the margin nearly vanishes (57.1 vs 48.5).
 
-**Open, in the order worth doing:** sweep `inversion__num_steps` (threat 1); finish the
-CogVideoX and generation tracks; test the internal + external combination that §2 points at.
+**Open, in the order worth doing:** control the magnitude effect (threat 5) — it is now
+the load-bearing result and the least understood; sweep `inversion__num_steps` (threat 1);
+finish the CogVideoX and generation tracks; test the internal + external combination that
+§2 points at.
 
 ## Reproducing
 

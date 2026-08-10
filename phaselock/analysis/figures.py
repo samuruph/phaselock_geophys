@@ -902,8 +902,14 @@ def signal_profile(
     palette.caption(
         figure,
         "Line = mean across clips, band = 1 s.d. All are oriented so larger means less "
-        "regular, so GeoPhys predicts violated (red) above plausible (blue) at every depth. "
-        "This is the raw effect, before any pairing or thresholding.",
+        "regular, so GeoPhys predicts violated (red) above plausible (blue) at every depth.\n"
+        "DO NOT read effect size off this figure. Both the line and the band are UNPAIRED, "
+        "while the accuracy is a within-pair comparison: bands that overlap almost entirely "
+        "still give 75%, because a pair's two clips share a scenario and cancel most of "
+        "that spread. The visible gap also tracks the statistic's magnitude, which is "
+        "largest where the latent still holds real content, so it looks widest near the "
+        "clean end even where accuracy is not. For separation by depth and step, read "
+        "02_depth_profile and 03_depth_vs_time.",
     )
     figure.savefig(path, bbox_inches="tight")
     plt.close(figure)
