@@ -126,11 +126,43 @@ mean.
 Not from either paper. Every quantity above is geometric; these ask the same trajectory
 questions a physicist would, and are oriented the same way — larger means less plausible.
 
-| statistic | definition | what a violation looks like |
+All three are built from the **same `v_t` as everything else** — no new quantity is
+introduced:
+
+```
+v_t = z̄_{t+1} − z̄_t          the displacement of the pooled feature between
+                              consecutive *latent* frames
+```
+
+Two things about that `v_t` matter for reading these as physics:
+
+* **The time step is a latent frame, not a second.** Wan's causal VAE folds four video
+  frames into each latent after the first, so `v_t` is displacement per ~4 video frames.
+  Every statistic is a within-pair comparison at identical spacing, so this cancels — but
+  it means `φ_energy` is not joules and `v_t` is not m/s.
+* **The first latent covers one frame, not four.** So `v_1` spans a shorter interval than
+  every later step and is systematically larger. It inflates any summary that is sensitive
+  to a single outlier, which is why `φ_energy` is a coefficient of variation rather than a
+  raw spread.
+
+| statistic | computed as | what a violation looks like |
 |---|---|---|
-| `φ_energy` | `std({E_t}) / mean({E_t})`, `E_t = ½‖v_t‖²` | energy appearing or vanishing between frames. Distinct from `φ_speed` because squaring weights a doubling four times as heavily as a halving, which is the asymmetry an impulsive event produces |
-| `φ_momentum` | `1 − ‖Σ v_t‖ / Σ‖v_t‖` | 0 for a straight line, 1 for a round trip. How little of the path went anywhere |
-| `φ_jerk` | `mean({‖j_t‖²})`, `j_t` the third difference | acceleration is force, jerk is its *change*. A teleport, a freeze or an inserted collision is a discontinuity in acceleration and spikes here |
+| `φ_energy` | `E_t = ½‖v_t‖²` per frame, then `std({E_t}) / mean({E_t})` | Distinct from `φ_speed`, which is `std({‖v_t‖})`: squaring before summarising weights a doubling four times as heavily as a halving. Normalised by the mean so a VAE latent and a DiT hidden state, whose magnitudes differ by orders of magnitude, are comparable |
+| `φ_momentum` | `Σ v_t` telescopes to `z̄_T − z̄_1`, so this is net displacement over path length, subtracted from 1 | 0 for a straight line, 1 for a round trip. How little of the distance travelled went anywhere |
+| `φ_jerk` | `a_t = v_{t+1} − v_t`, then `j_t = a_{t+1} − a_t`, then `mean({‖j_t‖²})` | acceleration is force, jerk is its *change*. Constant acceleration — a ball under gravity — gives exactly zero; a teleport, a freeze or an inserted collision is a discontinuity in acceleration and spikes |
+
+> **Measured, on 5 archived LikePhys pairs with Wan.** `φ_jerk` is the strongest single
+> statistic in the whole set — 91.3% on hidden states against `φ_accel`'s 88.6% —
+> and `φ_momentum` reaches 77.9%.
+>
+> **`φ_energy` reads 23.1%, far *below* chance, and that is a result rather than a
+> failure.** It means the orientation is backwards: *plausible* clips have the more
+> variable energy. There is a physical reading — real dynamics exchange energy
+> continuously as a ball falls, bounces and slows, while many injected violations impose
+> unnaturally *uniform* motion — and 27 points below chance is more discriminative than
+> `φ_perr`'s 18 above it. But flipping the sign on the evidence that suggested it is
+> post-hoc, so it is left as measured. The n=100 run is independent of these five pairs
+> and will settle it.
 
 **These are analogies, and calling them energy and momentum is suggestive naming rather
 than physics.** There is no mass, no metric and no gravity direction in a pooled feature
