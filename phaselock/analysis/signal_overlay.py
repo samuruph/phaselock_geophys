@@ -2,7 +2,7 @@
 
 A number in `statistics.csv` and a clip in `videos/` describe the same thing and are
 impossible to hold side by side. This composites one onto the other: the video on top,
-and beneath it the five statistics for that exact clip, plausible against violated.
+and beneath it the per-frame statistics for that exact clip, plausible against violated.
 
 **Everything here is post-processing.** It reads `statistics.csv` and the mp4s that a run
 already produced and re-encodes them, so it costs seconds of CPU and never touches the
@@ -314,7 +314,7 @@ def signal_strip(
         else:
             axis.set_xlabel("t:  0 = clean video  ->  1000 = noise", fontsize=6.5, labelpad=1)
 
-        axis.set_title(palette.statistic_label(name), fontsize=7.5, pad=3)
+        axis.set_title(palette.statistic_short(name), fontsize=7.5, pad=3)
         axis.tick_params(labelsize=6)
 
     axes[0][0].legend(fontsize=6.5, loc="best")
@@ -408,7 +408,7 @@ def animated_strips(
 
             axis.set_xlim(min(ticks.values()), max(ticks.values()))
             axis.set_ylim(*limits[name])
-            axis.set_title(palette.statistic_label(name), fontsize=7.5, pad=3)
+            axis.set_title(palette.statistic_short(name), fontsize=7.5, pad=3)
             axis.set_xlabel("t:  0 = clean video  ->  1000 = noise", fontsize=6.5, labelpad=1)
             axis.tick_params(labelsize=6)
         axes[0][0].legend(fontsize=6.5, loc="best")
@@ -486,7 +486,7 @@ def _draw_timeline(
 
         axis.set_xlim(0, max(len(s) for s in (low, high) if s is not None) - 1)
         axis.set_ylim(*limits[name])
-        axis.set_title(palette.statistic_label(name), fontsize=8, pad=3)
+        axis.set_title(palette.statistic_short(name), fontsize=8, pad=3)
         axis.set_xlabel("video frame", fontsize=7, labelpad=1)
         axis.tick_params(labelsize=6.5)
 

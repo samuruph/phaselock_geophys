@@ -78,9 +78,22 @@ STATISTIC_LABELS = {
     "momentum": r"$\varphi_{mom}$  momentum non-persistence (new)",
     "jerk": r"$\varphi_{jerk}$  jerk (new)",
     "or": "OR ensemble",
-    "majority": "Majority ensemble (all five)",
+    "majority": "Majority ensemble",
     "alignment": r"$\rho$  transport alignment (new)",
     "erosion": "erosion rate (new)",
+}
+
+# For panels too narrow for the full label. Six per-frame statistics across one video width
+# leaves ~170px each, and "kinetic-energy variation (new)" simply overprints its neighbour.
+STATISTIC_SHORT = {
+    "speed": r"$\varphi_{speed}$  speed",
+    "curv": r"$\varphi_{curv}$  turning",
+    "ang": r"$\varphi_{ang}$  angle s.d.",
+    "accel": r"$\varphi_{accel}$  acceleration",
+    "perr": r"$\varphi_{perr}$  residual",
+    "energy": r"$\varphi_{energy}$  energy",
+    "momentum": r"$\varphi_{mom}$  momentum",
+    "jerk": r"$\varphi_{jerk}$  jerk",
 }
 
 # Plain words, for places where an axis label would be crowded by the symbol.
@@ -197,6 +210,11 @@ def sequential_cmap() -> Any:
 
 def statistic_label(name: str) -> str:
     return STATISTIC_LABELS.get(name, name)
+
+
+def statistic_short(name: str) -> str:
+    """Label for a panel too narrow for the full one; falls back to it when absent."""
+    return STATISTIC_SHORT.get(name, STATISTIC_LABELS.get(name, name))
 
 
 def statistic_plain(name: str) -> str:

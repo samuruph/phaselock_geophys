@@ -614,7 +614,7 @@ def ensemble_over_statistics(
     step: int,
     kind: str = "phi",
 ) -> dict[str, PairwiseResult]:
-    """Combine the five statistics at one probe location, by OR and by Majority.
+    """Combine the statistics at one probe location, by OR and by Majority.
 
     These are the paper's headline numbers, not an afterthought: OR (defer to whichever
     signal is most confident) reaches 98.3% on LikePhys against 77.6-80.8% for the best

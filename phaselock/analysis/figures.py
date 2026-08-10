@@ -360,10 +360,10 @@ def depth_time_heatmaps(
     Two panels because "best" and "typical" are different questions and a single matrix
     cannot answer both:
 
-    * **left, max over the five statistics** -- the best case at each location, which is
+    * **left, max over the statistics** -- the best case at each location, which is
       what a tuned detector would use, and is upward-biased by the same selection effect
       that inflates any maximum;
-    * **right, mean over the five statistics** -- whether the location is informative in
+    * **right, mean over the statistics** -- whether the location is informative in
       general rather than for one lucky statistic.
 
     Stars mark the top ``top_k`` cells of each panel, the brightest being the best.
@@ -397,8 +397,8 @@ def depth_time_heatmaps(
     image = None
 
     for axis, array, title in (
-        (axes[0][0], best, "max over the five statistics"),
-        (axes[0][1], mean, "mean over the five statistics"),
+        (axes[0][0], best, "max over the statistics"),
+        (axes[0][1], mean, "mean over the statistics"),
     ):
         image = axis.imshow(array, aspect="auto", cmap=palette.diverging_cmap(),
                             vmin=CHANCE - span, vmax=CHANCE + span, interpolation="nearest")
@@ -519,8 +519,8 @@ def statistic_comparison(
     palette.caption(
         figure,
         "Bar = mean over the probe grid, error bar = 1 s.d., diamond = best cell. Dashed "
-        "divider separates the five GeoPhys statistics from the two new flow-coupling "
-        "metrics; solid divider separates both from the ensembles over all five.",
+        "divider separates the eight trajectory statistics from the two flow-coupling "
+        "metrics; solid divider separates both from the ensembles over the statistics.",
     )
     figure.tight_layout(rect=(0, 0.05, 1, 1))
     figure.savefig(path, bbox_inches="tight")
@@ -803,14 +803,14 @@ def signal_profile(
     """Raw statistic values for plausible vs violated clips, across depth or time.
 
     The analogue of GeoPhys Figure 3, which plots mean curvature per layer with plausible
-    below violated at every layer. This shows all five statistics rather than curvature
+    below violated at every layer. This shows every statistic rather than curvature
     alone, plus the two new flow-coupling metrics where available.
 
     Unlike every other figure here, the y-axis is the **statistic itself**, not a
     detection accuracy. That matters: a gap between the two curves is the raw effect,
     before any thresholding or pairing, so it shows both *whether* the classes separate
     and *in which direction*. GeoPhys's claim is that violated sits above plausible
-    everywhere, since all five are oriented so larger means less regular.
+    everywhere, since all are oriented so larger means less regular.
     """
     import matplotlib.pyplot as plt
     import numpy as np
@@ -879,7 +879,7 @@ def signal_profile(
     figure.get_layout_engine().set(rect=(0, 0.055, 1, 0.94))
     palette.caption(
         figure,
-        "Line = mean across clips, band = 1 s.d. All five are oriented so larger means less "
+        "Line = mean across clips, band = 1 s.d. All are oriented so larger means less "
         "regular, so GeoPhys predicts violated (red) above plausible (blue) at every depth. "
         "This is the raw effect, before any pairing or thresholding.",
     )

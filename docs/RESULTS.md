@@ -10,10 +10,17 @@ filed under `<backend>/<dataset>/<stage>/` so the path carries the provenance.
 
 | section | backend | mode | dataset | stage | status |
 |---|---|---|---|---|---|
-| §3–§6 (everything below) | **Wan2.1-T2V-1.3B** | T2V, inversion | LikePhys, 96 pairs | detection | **complete** |
-| §3 external baseline | DINOv2-large (frozen) | encoder, no diffusion | LikePhys, 96 pairs | detection | **complete** |
-| §7 (secondary) | CogVideoX-5B-I2V | I2V, inversion | LikePhys, 12 pairs | detection | in progress |
-| §7 (secondary) | CogVideoX-5B-I2V | I2V, generation | LikePhys, 6 clips | generation | in progress |
+| §4–§6 (everything below) | **Wan2.1-T2V-1.3B** | T2V, inversion | LikePhys, 100 pairs @ 512² | inversion | **complete** |
+| §4 external baseline | DINOv2-large (frozen) | encoder, no diffusion | LikePhys, 100 pairs @ 512² | inversion | **complete** |
+| §3 correctness gate | both of the above | — | LikePhys | inversion | **complete** |
+| §7 (secondary) | CogVideoX-5B-I2V | I2V, inversion | LikePhys, 100 pairs | inversion | in progress |
+| §7 (secondary) | CogVideoX-5B-I2V | I2V, generation | LikePhys | generation | in progress |
+| §7 (secondary) | Wan2.1-T2V-1.3B | T2V, inversion | IntPhys2, 100 pairs | inversion | in progress |
+
+The n=100 numbers in §4 come from `20260810_1107_n100_native`. Its `φ_energy`, `φ_momentum`
+and `φ_jerk` columns were rebuilt from that run's saved trajectories with
+`scripts/rescore_trajectories.py` — those three statistics did not exist when it started —
+and live in `statistics_rescored.csv` beside the original. Nothing else was recomputed.
 
 Written 2026-08-08. The 96-pair Wan run behind §3-§6 predates a rename of the stage from
 `detection` to `inversion` (the name now says where the trajectory came from, since GeoPhys
@@ -193,7 +200,32 @@ it is not swamped) and `scalar` (a single AR coefficient) are available for comp
 
 See [METHOD.md](METHOD.md) for the full derivation and the other three deviations.
 
-### The three new metrics
+### The three physics statistics
+
+GeoPhys's five are geometric — they describe the *shape* of the trajectory and would read
+the same on any curve through any space. These three ask instead whether the trajectory
+obeys the conservation laws real motion obeys. They use the same `v_t = z̄_{t+1} − z̄_t` as
+the five above, so nothing new is estimated:
+
+```
+E_t = ½‖v_t‖²
+
+φ_energy   = std({E_t}) / mean({E_t})        coefficient of variation of kinetic energy
+φ_momentum = 1 − ‖Σ_t v_t‖ / Σ_t ‖v_t‖       how much displacement the motion cancels
+φ_jerk     = mean({‖j_t‖²}),  j_t = a_{t+1} − a_t      third difference
+```
+
+`φ_energy` is dimensionless by construction, so it is comparable across sources whose
+feature norms differ by orders of magnitude. `φ_momentum` is 0 for perfectly straight-line
+motion and approaches 1 for motion that returns to where it started — a measure of how
+*non-ballistic* the path is. `φ_jerk` extends the `φ_accel` ladder by one derivative, on
+the reasoning that injected violations are discontinuities and discontinuities show up
+first in high derivatives.
+
+Like the five, all three are oriented **larger = less plausible**. Two of the three hold
+that orientation and one does not; see §4 and §5.4.
+
+### The three coupling metrics
 
 The motivating observation: GeoPhys's velocity runs along the **frame** axis, the flow
 model's along the **denoising** axis, and they are linked *exactly*, because the
@@ -257,37 +289,57 @@ reproduced.
 
 ## 4. Headline numbers
 
-Pairwise accuracy, mean ± s.d. across probe cells, `n = 96` pairs.
+Pairwise accuracy, mean ± s.d. across probe cells, `n = 100` pairs at native 512x512.
 **Bars must clear 52.8%; the best-cell column must clear 68.8%.**
 
-### The five statistics on internal representations
+### All eight statistics on internal representations
 
-**Backend: Wan2.1-T2V-1.3B**, inverted. LikePhys, 96 pairs.
+**Backend: Wan2.1-T2V-1.3B**, inverted. LikePhys, 100 pairs. The three rightmost columns
+are the physics-motivated additions defined in [METHOD.md](METHOD.md); the five to their
+left are GeoPhys's.
 
-| source | φ_perr | φ_accel | φ_curv | φ_ang | φ_speed |
-|---|---|---|---|---|---|
-| **DiT hidden states** (300 cells) | **72.1 ± 3.0** | 66.7 ± 6.7 | 49.3 ± 7.0 | 49.4 ± 5.6 | 43.7 ± 6.4 |
-| **VAE latent `x_t`** (10) | **69.5 ± 1.9** | 63.0 ± 4.9 | 52.0 ± 4.3 | 46.8 ± 2.9 | 37.7 ± 4.8 |
-| **flow velocity `u_θ`** (10) | **68.9 ± 4.1** | 66.1 ± 5.4 | 55.8 ± 3.6 | 50.1 ± 5.3 | 42.2 ± 4.8 |
-| **clean estimate `x̂₀`** (10) | **65.5 ± 1.6** | 61.9 ± 6.3 | 59.8 ± 3.2 | 52.3 ± 7.3 | 46.5 ± 4.1 |
+| source | φ_perr | φ_accel | φ_curv | φ_ang | φ_speed | φ_jerk | φ_mom | φ_energy |
+|---|---|---|---|---|---|---|---|---|
+| **DiT hidden states** (300 cells) | **75.3 ± 3.2** | 70.7 ± 7.0 | 49.6 ± 5.2 | 49.8 ± 6.1 | 49.4 ± 6.6 | 68.8 ± 6.7 | 60.0 ± 6.2 | 28.5 ± 6.3 |
+| **VAE latent `x_t`** (10) | **72.6 ± 3.6** | 67.3 ± 4.1 | 54.0 ± 4.6 | 51.0 ± 3.3 | 46.6 ± 4.6 | 67.2 ± 6.1 | 55.4 ± 3.7 | 31.5 ± 4.6 |
+| **flow velocity `u_θ`** (10) | 68.9 ± 5.4 | **73.1 ± 4.5** | 53.1 ± 3.0 | 52.0 ± 7.1 | 47.4 ± 2.9 | 72.2 ± 4.2 | 59.8 ± 3.8 | 31.1 ± 5.9 |
+| **clean estimate `x̂₀`** (10) | 64.8 ± 2.3 | 66.0 ± 5.2 | 63.1 ± 2.6 | 53.2 ± 4.6 | 50.9 ± 3.7 | **69.0 ± 8.8** | 58.5 ± 3.2 | 29.7 ± 4.2 |
 
-Best single cell overall: **hidden states, block 6, step 4, `φ_accel` — 85.4%**
-[77.1, 92.7], against a 68.8% selection floor, `p < 0.0001`.
+Best single cells on hidden states: `φ_accel` and `φ_jerk` both **87.0%**, `φ_perr` 82.0%,
+against a 68.8% selection floor.
 
-### The same five on the external DINOv2 baseline
+**`φ_energy` is 20 points *below* chance in all four sources.** That is not failure — it is
+the same discriminative power with the sign inverted, and it is far too consistent
+(28.5 / 31.5 / 31.1 / 29.7 across independent readouts) to be noise. Plausible clips
+genuinely have *more* variable kinetic energy than violated ones, which is the opposite of
+the "larger = less regular" orientation every statistic here assumes. Flipping the sign
+would put it at ≈70%, third-best overall — but that choice was made after seeing the
+result, so the unflipped number is what is reported. See §5.4.
+
+### All eight on the external DINOv2 baseline
 
 **No diffusion model involved** — frozen DINOv2-large on the decoded frames.
 
 Temporally matched: DINOv2 features averaged over each latent's 4 video frames, so both
-paths have 21 trajectory points with the same spacing. Same 96 pairs. 25 readout layers.
+paths have 21 trajectory points with the same spacing. Same 100 pairs. 25 readout layers.
 
-| source | φ_perr | φ_accel | φ_curv | φ_ang | φ_speed |
-|---|---|---|---|---|---|
-| **DINOv2-large** (25 cells/stat) | 54.4 ± 4.9 | 63.9 ± 8.1 | 63.5 ± 5.1 | 64.5 ± 4.0 | **65.4 ± 6.7** |
+| source | φ_perr | φ_accel | φ_curv | φ_ang | φ_speed | φ_jerk | φ_mom | φ_energy |
+|---|---|---|---|---|---|---|---|---|
+| **DINOv2-large** (25 cells/stat) | 54.9 ± 4.9 | 63.9 ± 8.2 | 61.8 ± 5.2 | 63.4 ± 3.7 | **65.3 ± 6.7** | 63.8 ± 8.2 | 53.2 ± 3.3 | 63.8 ± 5.9 |
 
-Best DINOv2 cell: layer 7, `φ_speed`, **74.0%** over 125 cells.
+Best DINOv2 cell: layer 11, `φ_jerk`, **74.0%** over 200 cells.
 
-### The three new metrics
+**The two profiles are shaped differently, and that is the finding.** DINOv2 is flat: every
+statistic lands in 53–65%, nothing excels and nothing fails. The DiT is spiky: `φ_perr` and
+`φ_accel` reach 75.3% and 70.7% — above anything DINOv2 achieves — while `φ_speed`, `φ_curv`
+and `φ_ang` sit at chance. A frozen image encoder spreads physical regularity thinly across
+every geometric summary; the video model concentrates it in the two that involve its own
+prediction error and second derivative.
+
+Note `φ_energy` is 63.8% on DINOv2 and 28.5% on the DiT — the sign flips *between
+representations*, so it is a property of the readout, not of the videos.
+
+### The three coupling metrics
 
 **Backend: Wan2.1-T2V-1.3B.**
 
@@ -363,12 +415,14 @@ not empty — but it also says the first-order term is the *worst* place to look
 (`φ_speed`, 37.7%), while the residual and acceleration terms PhaseLock never touches
 carry 69.5% and 63.0%.
 
-### 5.4 The new metrics do not pay off
+### 5.4 The additions: the coupling metrics fail, two of three physics statistics work
 
-Stated plainly: **geometric drift, transport alignment and erosion rate all
-underperform the plain statistics they were built from.** The best drift cell reaches
-58.7% mean where the plain `φ_perr` reaches 72.1%; alignment and erosion sit at 54.7% and
-54.2% against a 52.8% floor.
+Two separate sets of additions, and they came out differently.
+
+**The coupling metrics do not pay off.** Stated plainly: geometric drift, transport
+alignment and erosion rate all underperform the plain statistics they were built from. The
+best drift cell reaches 58.7% mean where the plain `φ_perr` reaches 75.3%; alignment and
+erosion sit at 54.7% and 54.2% against a 52.8% floor.
 
 The commutation identity is still correct and still the cleanest way to relate the two
 velocity notions. But as *detectors*, on this dataset and this backend, the coupled
@@ -376,6 +430,37 @@ quantities carry less than the uncoupled ones. Two readings are plausible and th
 cannot separate them: either the flow field genuinely does not distinguish plausible from
 violated trajectories, or the finite-difference estimator across only 10 recorded steps is
 too coarse to resolve a derivative. Recording more steps would test the second.
+
+**`φ_jerk` does pay off**, and it is the clearest positive result of the additions: 68.8%
+on hidden states, 72.2% on the flow velocity, 67–69% on the other two. That puts it third
+behind `φ_perr` and `φ_accel` and comfortably ahead of all three of GeoPhys's
+shape statistics, which sit at chance on this backend. It is also the only statistic that
+is strong on *every* source rather than one, which is what you would expect if
+discontinuity is the thing violations actually introduce.
+
+`φ_momentum` is a weak positive — 55–60%, above the 52.8% floor but not by much.
+
+**`φ_energy` is inverted, consistently, and this is the most interesting failure here.**
+28.5 / 31.5 / 31.1 / 29.7 across the four internal sources: roughly 20 points *below*
+chance, in the same direction, from readouts that share no parameters. A statistic with no
+signal sits at 50 with scatter; this does not.
+
+The reading: **plausible motion varies its kinetic energy more than violated motion does.**
+Real dynamics trade energy continuously — a ball decelerating into a bounce, cloth
+settling — so `std(E)/mean(E)` is large. LikePhys violations are injected by editing the
+motion toward something uniform (a phantom force applied steadily, a penetration that
+carries straight through), which *flattens* the energy profile. The orientation this
+project assumes, larger = less plausible, is simply backwards for energy.
+
+Two things worth saying about that. It is **not** the same claim as the five geometric
+statistics being at chance: those carry nothing, this carries as much as a good detector
+and points the wrong way. And the sign is a property of the *readout*, not the videos —
+DINOv2 scores 63.8% on the same statistic over the same clips. Whatever the DiT's pooled
+features encode as "energy" is not what DINOv2's do.
+
+The number is left unflipped throughout. The flip was identified after seeing the result,
+on the same run it would be evaluated on, which is exactly the selection error §2 warns
+about. Confirming it needs a held-out dataset — IntPhys2 is the obvious test.
 
 ### 5.5 Where it works and where it fails
 
