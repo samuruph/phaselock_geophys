@@ -22,6 +22,25 @@
 # in wall clock, and a failure in the fourth must not throw away the first three. Videos
 # and the CSV are keyed by arm, and the driver skips clips already on disk, so re-running
 # resumes rather than repeats.
+#
+# ---- on STRENGTH, before comparing arms -------------------------------------------
+# lambda = 0.05 is the paper's, tuned for first differences. Higher-order priors are NOT
+# reliably the same size, and the direction depends on how grainy the 2-step pass is.
+# Measured on a synthetic latent, prior RMS relative to `motion`:
+#
+#            smooth    slightly grainy    grainy
+#   accel     0.27x         0.71x          1.49x
+#   jerk      0.06x         1.21x          2.70x
+#   perr      0.00x         0.46x          0.85x
+#
+# A smooth trajectory has near-zero higher derivatives and lies in its own affine span; a
+# grainy one has differencing amplify the grain. So the same lambda is a *weaker*
+# intervention for `jerk` on a smooth prior and a *stronger* one on a grainy prior, and it
+# cannot be corrected analytically -- it depends on the 2-step output.
+#
+# Every guided run therefore prints the measured prior RMS per arm. Read it on the first
+# small run. If the arms are within a small factor, one lambda is fair; if they are orders
+# apart, sweep STRENGTH per arm before believing any ranking.
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
