@@ -329,3 +329,127 @@ class TestFrameOperators:
         # ... and is NOT the flattened fit, so the choice is a real one.
         flattened = residual_vectors(z.reshape(FRAMES, -1), order=3)
         assert not torch.allclose(got.reshape(flattened.shape), flattened, atol=1e-6)
+
+
+# -- the prior source -------------------------------------------------------
+#
+# `latent` is the sampler state. `x0_hat` and `velocity` are model *outputs*, so they
+# cannot be written to directly -- but renoise is affine in (x0, eps), so a change to x0
+# induces an exactly proportional change in the latent. These pin that identity, which is
+# what lets the source vary without reimplementing the scheduler or CFG.
+
+
+class _AffineBackend:
+    """A backend whose renoise is the VP mix, enough to exercise the state path on CPU."""
+
+    def __init__(self, spec, alpha_bar=0.36):
+        self.spec = spec
+        self.alpha_bar = alpha_bar
+
+    def renoise_scale(self, timestep):
+        return torch.tensor(self.alpha_bar).sqrt()
+
+    def renoise(self, x0, eps, timestep):
+        a = torch.tensor(self.alpha_bar)
+        return a.sqrt() * x0 + (1 - a).sqrt() * eps
+
+    def denoiser_state(self, latents, model_output, timestep):
+        from phaselock.backends.base import DenoiserState
+
+        z = to_canonical(latents, self.spec).float()
+        v = to_canonical(model_output, self.spec).float()
+        a = torch.tensor(self.alpha_bar)
+        x0 = a.sqrt() * z - (1 - a).sqrt() * v
+        eps = a.sqrt() * v + (1 - a).sqrt() * z
+        return DenoiserState(latents=z, x0=x0, eps=eps, tau=0.5)
+
+
+class TestPriorSource:
+    def test_renoise_is_affine_so_the_induced_latent_delta_is_exact(self):
+        """The identity the whole x0_hat/velocity path rests on.
+
+        renoise(x0 + d, eps, t) - renoise(x0, eps, t) == renoise_scale(t) * d
+        exactly, for any d. If this ever stops holding, guidance measured on a model
+        output would be written back with the wrong magnitude and nothing would raise.
+        """
+        backend = _AffineBackend(COGVIDEOX_5B)
+        x0 = canonical_latent(seed=3)
+        eps = canonical_latent(seed=4)
+        d = canonical_latent(seed=5)
+
+        induced = backend.renoise(x0 + d, eps, 0) - backend.renoise(x0, eps, 0)
+        assert torch.allclose(induced, backend.renoise_scale(0) * d, atol=1e-6)
+
+    @pytest.mark.parametrize("source", ["x0_hat", "velocity"])
+    def test_a_state_source_needs_the_backend(self, source):
+        """Constructing it without one would fail later, mid-generation, per clip."""
+        with pytest.raises(ValueError, match="needs"):
+            LatentDeltaGuidance(
+                extract_motion_prior(canonical_latent()), COGVIDEOX_5B,
+                source=source, total_steps=50,
+            )
+
+    def test_an_unknown_source_is_rejected_at_construction(self):
+        with pytest.raises(ValueError, match="unknown source"):
+            LatentDeltaGuidance(
+                extract_motion_prior(canonical_latent()), COGVIDEOX_5B,
+                source="hidden_states", total_steps=50,
+            )
+
+    @pytest.mark.parametrize("source", ["x0_hat", "velocity"])
+    def test_matching_a_state_against_its_own_prior_is_a_no_op(self, source):
+        """The same guard as for the latent path, on the state path.
+
+        Build a prediction, read the source off it, use that as the prior, and the
+        correction must vanish -- which catches a sign error the zero-strength test
+        cannot see.
+        """
+        backend = _AffineBackend(COGVIDEOX_5B)
+        previous = from_canonical(canonical_latent(seed=6), COGVIDEOX_5B)
+        model_output = from_canonical(canonical_latent(seed=7), COGVIDEOX_5B)
+        state = backend.denoiser_state(previous, model_output, 0)
+        measured = state.x0 if source == "x0_hat" else state.drift
+
+        guidance = LatentDeltaGuidance(
+            extract_motion_prior(measured), COGVIDEOX_5B,
+            source=source, backend=backend, total_steps=50,
+        )
+        latents = from_canonical(canonical_latent(seed=8), COGVIDEOX_5B)
+        got = guidance.apply_to_state(latents, previous, model_output, 0, 0, 0.7)
+        assert torch.allclose(got, latents, atol=1e-5)
+
+    @pytest.mark.parametrize("source", ["x0_hat", "velocity"])
+    def test_the_anchor_frames_are_untouched_on_the_state_path_too(self, source):
+        backend = _AffineBackend(COGVIDEOX_5B)
+        previous = from_canonical(canonical_latent(seed=6), COGVIDEOX_5B)
+        model_output = from_canonical(canonical_latent(seed=7), COGVIDEOX_5B)
+        latents = from_canonical(canonical_latent(seed=8), COGVIDEOX_5B)
+
+        guidance = LatentDeltaGuidance(
+            extract_motion_prior(canonical_latent(seed=9)), COGVIDEOX_5B,
+            source=source, backend=backend, total_steps=50,
+        )
+        got = to_canonical(
+            guidance.apply_to_state(latents, previous, model_output, 0, 0, 0.5),
+            COGVIDEOX_5B,
+        )
+        before = to_canonical(latents, COGVIDEOX_5B)
+        assert torch.equal(got[:1], before[:1])
+        assert not torch.allclose(got[1:], before[1:])
+
+    def test_the_first_step_is_skipped_because_it_has_no_predecessor(self):
+        """`noise_pred` belongs to the state that went INTO the step, which the callback
+        only knows from the step before. Skipping is correct; guessing would misalign
+        every subsequent correction."""
+        backend = _AffineBackend(COGVIDEOX_5B)
+        guidance = LatentDeltaGuidance(
+            extract_motion_prior(canonical_latent()), COGVIDEOX_5B,
+            source="x0_hat", backend=backend, total_steps=50,
+        )
+        latents = from_canonical(canonical_latent(seed=8), COGVIDEOX_5B)
+        kwargs = {"latents": latents,
+                  "noise_pred": from_canonical(canonical_latent(seed=7), COGVIDEOX_5B)}
+
+        first = guidance(None, 0, torch.tensor(0.0), dict(kwargs))
+        assert torch.equal(first["latents"], latents)   # no predecessor yet
+        assert guidance._previous_latents is not None   # ... but it is remembered

@@ -356,6 +356,16 @@ class VideoBackend(ABC):
             timestep: The timestep the output was produced at.
         """
 
+    def renoise_scale(self, timestep: "torch.Tensor | float") -> "torch.Tensor":
+        """The coefficient of ``x0`` in :meth:`renoise` at ``timestep``.
+
+        ``renoise`` is affine in ``(x0, eps)`` for every backend, so a change of ``d`` in
+        ``x0`` moves the latent by exactly ``renoise_scale(t) * d`` with ``eps`` held
+        fixed. That is what lets guidance measured on a model output be written back to
+        the sampler state without reimplementing the scheduler.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def renoise(
         self, x0: torch.Tensor, eps: torch.Tensor, timestep: torch.Tensor | float

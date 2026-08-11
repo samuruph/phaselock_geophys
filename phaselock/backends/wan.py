@@ -172,6 +172,11 @@ class WanBackend(VideoBackend):
         eps = z + (1.0 - sigma) * v
         return DenoiserState(latents=z, x0=x0, eps=eps, tau=1.0 - sigma)
 
+    def renoise_scale(self, timestep: torch.Tensor | float) -> torch.Tensor:
+        """``1 - sigma``, the coefficient of ``x0`` in :meth:`renoise`."""
+        t = float(timestep.flatten()[0].item() if torch.is_tensor(timestep) else timestep)
+        return torch.tensor(1.0 - t / self.num_train_timesteps)
+
     def renoise(
         self, x0: torch.Tensor, eps: torch.Tensor, timestep: torch.Tensor | float
     ) -> torch.Tensor:

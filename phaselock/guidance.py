@@ -30,6 +30,15 @@ import torch
 from .backends.base import LatentSpec, from_canonical, to_canonical
 from .operators import get_operator
 
+SOURCES = ("latent", "x0_hat", "velocity")
+"""Which tensor the frame operator is measured on.
+
+``latent`` is the sampler state and is what PhaseLock uses. The other two are model
+*outputs* -- what the network currently believes the clean video is, and the flow field
+carrying the state there -- so they exist only alongside a prediction, and the correction
+they imply is written back through ``x0``. See :meth:`LatentDeltaGuidance.apply_to_state`.
+"""
+
 
 def extract_prior(
     few_latents: torch.Tensor,
@@ -93,6 +102,8 @@ class LatentDeltaGuidance:
         guide_end: Optional[int] = None,
         total_steps: int = 50,
         few_step_prior_type: str = "motion",
+        source: str = "latent",
+        backend: Any = None,
     ):
         if motion_prior.ndim != 4:
             raise ValueError(
@@ -100,14 +111,24 @@ class LatentDeltaGuidance:
             )
         if guidance_strength < 0:
             raise ValueError(f"guidance_strength must be non-negative, got {guidance_strength}")
+        if source not in SOURCES:
+            raise ValueError(f"unknown source {source!r}; expected one of {sorted(SOURCES)}")
+        if source != "latent" and backend is None:
+            raise ValueError(
+                f"source {source!r} is a model output, not the sampler state, so it needs "
+                "the backend to invert the denoiser's parameterisation"
+            )
 
         self.motion_prior = motion_prior
         self.few_step_prior_type = get_operator(few_step_prior_type)
+        self.source = source
+        self.backend = backend
         self.spec = spec
         self.guidance_strength = guidance_strength
         self.guide_start = guide_start
         self.guide_end = guide_end if guide_end is not None else total_steps // 2
         self.total_steps = total_steps
+        self._previous_latents: Optional[torch.Tensor] = None
 
         if self.guide_end <= self.guide_start:
             raise ValueError(
@@ -132,15 +153,43 @@ class LatentDeltaGuidance:
         timestep: torch.Tensor,
         callback_kwargs: Dict[str, Any],
     ) -> Dict[str, Any]:
-        strength = self.compute_schedule(step_index)
-        if strength == 0.0:
-            return callback_kwargs
-
         latents = callback_kwargs.get("latents")
-        if latents is None:
+        strength = self.compute_schedule(step_index)
+
+        # The callback fires *after* scheduler.step(), so `latents` is already the next
+        # state. Remember it: it is what the pipeline feeds the following step, which is
+        # the state `noise_pred` will then correspond to. Kept regardless of strength, so
+        # the chain is unbroken when guidance switches on mid-schedule.
+        previous, self._previous_latents = self._previous_latents, latents
+
+        if strength == 0.0 or latents is None:
             return callback_kwargs
 
-        callback_kwargs["latents"] = self.apply(latents, strength)
+        if self.source == "latent":
+            callback_kwargs["latents"] = self.apply(latents, strength)
+            return callback_kwargs
+
+        # x0_hat and velocity are the model's *output*, not the sampler state, so they
+        # only exist alongside a prediction. `noise_pred` is requestable once the pipeline
+        # instance's _callback_tensor_inputs is extended, and it arrives already
+        # CFG-combined -- diffusers does that before calling us.
+        noise_pred = callback_kwargs.get("noise_pred")
+        if noise_pred is None or previous is None:
+            return callback_kwargs
+
+        # `timestep` is the step just taken, which is the one `noise_pred` and
+        # `previous` belong to. The latents being written are the state *after* it, so the
+        # affine scale is read at the next timestep on the schedule.
+        schedule = getattr(pipe, "scheduler", None)
+        timesteps = getattr(schedule, "timesteps", None)
+        next_timestep = (
+            timesteps[step_index + 1]
+            if timesteps is not None and step_index + 1 < len(timesteps)
+            else 0.0
+        )
+        callback_kwargs["latents"] = self.apply_to_state(
+            latents, previous, noise_pred, timestep, next_timestep, strength
+        )
         return callback_kwargs
 
     def apply(self, latents: torch.Tensor, strength: float) -> torch.Tensor:
@@ -171,4 +220,50 @@ class LatentDeltaGuidance:
 
         guided = canonical.clone()
         guided[anchor:] = canonical[anchor:] + strength * (prior - current)
+        return from_canonical(guided, self.spec).to(latents.dtype)
+
+    def apply_to_state(
+        self,
+        latents: torch.Tensor,
+        previous_latents: torch.Tensor,
+        model_output: torch.Tensor,
+        timestep: torch.Tensor,
+        next_timestep: torch.Tensor,
+        strength: float,
+    ) -> torch.Tensor:
+        """The same update, measured on a model output rather than the sampler state.
+
+        ``x0_hat`` and ``velocity`` are not states we can write to -- they are what the
+        network says about the state. But the two are related by an affine map: for every
+        backend ``renoise(x0, eps, t)`` is a fixed linear combination, so a change to
+        ``x0`` induces an exactly proportional change in the latent and nothing has to be
+        reimplemented::
+
+            renoise(x0 + d, eps, t) - renoise(x0, eps, t) = sqrt(alpha_bar_t) * d
+
+        So the *source* chooses what is measured and the write always lands on ``x0``.
+        For ``velocity = x0 - eps`` with ``eps`` held fixed, a change of ``d`` in ``x0``
+        is a change of ``d`` in the velocity, so the correction carries across unchanged.
+        """
+        state = self.backend.denoiser_state(previous_latents, model_output, timestep)
+        measured = state.x0 if self.source == "x0_hat" else state.drift
+
+        anchor = self.few_step_prior_type.anchor
+        expected = measured.shape[0] - anchor
+        if expected != self.motion_prior.shape[0]:
+            raise ValueError(
+                f"{self.few_step_prior_type.name} prior covers {self.motion_prior.shape[0]} "
+                f"windows but the {self.source} trajectory gives {expected}"
+            )
+
+        prior = self.motion_prior.to(measured.device, measured.dtype)
+        correction = strength * (prior - self.few_step_prior_type(measured))
+
+        # Only the frames after the anchor move, exactly as in `apply`.
+        delta = torch.zeros_like(measured)
+        delta[anchor:] = correction
+
+        canonical = to_canonical(latents, self.spec)
+        scale = self.backend.renoise_scale(next_timestep).to(canonical.device)
+        guided = canonical + (scale * delta).to(canonical.dtype)
         return from_canonical(guided, self.spec).to(latents.dtype)

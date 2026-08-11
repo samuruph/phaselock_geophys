@@ -21,6 +21,40 @@ from ..backends.base import VideoBackend
 from ..guidance import LatentDeltaGuidance, extract_prior
 
 
+class _FinalStateCapture:
+    """Records the denoiser's own view at the last step of a pass.
+
+    ``x0_hat`` and ``velocity`` are not the sampler state, so they cannot be recovered by
+    re-encoding the decoded video the way ``latent`` is. They exist only alongside a
+    prediction, so they are captured in the loop and the last step's values are kept --
+    that being the pass's final belief about the clean video, which is the analogue of
+    "the latents the few-step pass ended at".
+    """
+
+    def __init__(self, backend: Any):
+        self.backend = backend
+        self._previous: Optional[torch.Tensor] = None
+        self.state = None
+
+    def __call__(self, pipe, step_index, timestep, callback_kwargs):
+        latents = callback_kwargs.get("latents")
+        noise_pred = callback_kwargs.get("noise_pred")
+        previous, self._previous = self._previous, latents
+        # `noise_pred` belongs to the state that went *into* this step, which is what the
+        # previous callback returned. Step 0 has no predecessor and is skipped.
+        if previous is not None and noise_pred is not None:
+            self.state = self.backend.denoiser_state(previous, noise_pred, timestep)
+        return callback_kwargs
+
+    def trajectory(self, source: str) -> torch.Tensor:
+        if self.state is None:
+            raise RuntimeError(
+                "no denoiser state captured. A few-step pass needs at least two steps for "
+                "one of them to have a predecessor; raise phaselock.few_steps."
+            )
+        return self.state.x0 if source == "x0_hat" else self.state.drift
+
+
 class PhaseLockPipeline:
     """Adds Latent Delta Guidance to any registered backend."""
 
@@ -33,6 +67,7 @@ class PhaseLockPipeline:
         guide_start: int = 0,
         guide_end: Optional[int] = None,
         few_step_prior_type: str = "motion",
+        source: str = "latent",
     ):
         self.backend = backend
         self.few_steps = few_steps
@@ -43,11 +78,29 @@ class PhaseLockPipeline:
         # Which quantity the few-step pass is mined for and the full pass is held to.
         # "motion" is PhaseLock as published; the rest are the ablation.
         self.few_step_prior_type = few_step_prior_type
+        # Which tensor the operator is measured on. "latent" is the sampler state and is
+        # PhaseLock's own; the others are model outputs and need `noise_pred`.
+        self.source = source
         self.last_prior_rms: float = float("nan")
 
     @property
     def pipe(self) -> Any:
         return self.backend.pipe
+
+    def _callback_inputs(self) -> list:
+        """Which tensors the sampler must hand the callback.
+
+        ``noise_pred`` is not in diffusers' default allow-list, but that list is a plain
+        attribute checked for membership and the value is in scope where the callback is
+        invoked -- and by then it is already CFG-combined, so nothing about guidance has
+        to be reimplemented. Extended on the instance, never on the class.
+        """
+        if self.source == "latent":
+            return ["latents"]
+        allowed = getattr(self.pipe, "_callback_tensor_inputs", None)
+        if allowed is not None and "noise_pred" not in allowed:
+            self.pipe._callback_tensor_inputs = list(allowed) + ["noise_pred"]
+        return ["latents", "noise_pred"]
 
     @classmethod
     def from_backend(cls, name: str, **kwargs: Any) -> "PhaseLockPipeline":
@@ -102,15 +155,28 @@ class PhaseLockPipeline:
             negative_prompt=negative_prompt,
         )
 
-        # Stage 1: capture the motion prior from a few-step pass.
+        # Stage 1: capture the prior from a few-step pass.
+        capture = _FinalStateCapture(self.backend) if self.source != "latent" else None
         few_result = self.pipe(
             **shared,
             num_inference_steps=self.few_steps,
             generator=torch.Generator(device=device).manual_seed(seed),
+            **({"callback_on_step_end": capture,
+                "callback_on_step_end_tensor_inputs": ["latents", "noise_pred"]}
+               if capture is not None else {}),
         ).frames[0]
 
-        few_latents = self.backend.encode(self._frames_to_tensor(few_result).to(device))
-        motion_prior = extract_prior(few_latents, few_step_prior_type=self.few_step_prior_type)
+        if capture is None:
+            # PhaseLock takes the prior from the decoded-then-re-encoded few-step video,
+            # not from the in-loop latents. Kept exactly so for the reproduction.
+            source_trajectory = self.backend.encode(
+                self._frames_to_tensor(few_result).to(device)
+            )
+        else:
+            source_trajectory = capture.trajectory(self.source)
+        motion_prior = extract_prior(
+            source_trajectory, few_step_prior_type=self.few_step_prior_type
+        )
         # Recorded so the ablation can answer whether one strength is comparable across
         # operators. lambda = 0.05 was tuned for first differences; each further
         # difference amplifies whatever noise the 2-step pass carries, so a higher-order
@@ -127,6 +193,8 @@ class PhaseLockPipeline:
             guide_end=self.guide_end,
             total_steps=self.full_steps,
             few_step_prior_type=self.few_step_prior_type,
+            source=self.source,
+            backend=self.backend if self.source != "latent" else None,
         )
 
         # Stage 2: same seed, full length, guided toward the prior.
@@ -135,7 +203,7 @@ class PhaseLockPipeline:
             num_inference_steps=self.full_steps,
             generator=torch.Generator(device=device).manual_seed(seed),
             callback_on_step_end=guidance,
-            callback_on_step_end_tensor_inputs=["latents"],
+            callback_on_step_end_tensor_inputs=self._callback_inputs(),
         ).frames[0]
 
         del few_latents, motion_prior

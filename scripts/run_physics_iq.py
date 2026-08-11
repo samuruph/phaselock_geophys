@@ -71,6 +71,7 @@ from phaselock.datasets.video_io import load_video
 from phaselock.experiments.detection import frame_geometry
 from phaselock.experiments.generation import frames_to_tensor
 from phaselock.metrics.motion_mask import motion_mask_scores
+from phaselock.guidance import SOURCES
 from phaselock.operators import OPERATORS
 from phaselock.pipelines.phaselock import PhaseLockPipeline
 from phaselock.progress import track
@@ -108,6 +109,9 @@ def parse_args() -> argparse.Namespace:
                         choices=list(GUIDANCES) + list(GUIDANCE_ALIASES),
                         help="one control plus any frame operators; all run on the same "
                              "seed and clips, so every difference is paired")
+    parser.add_argument("--source", default=None, choices=list(SOURCES),
+                        help="which tensor the prior is measured on; default from the "
+                             "config. latent is PhaseLock's own")
     parser.add_argument("--categories", type=_list,
                         help="names from the CSV's category column; default is all five")
     parser.add_argument("--perspectives", type=_list, help="left,center,right; default all")
@@ -271,6 +275,8 @@ def main() -> None:
                 "guidance_strength": (0.0 if name == "baseline"
                                       else config.phaselock.guidance_strength),
                 "few_step_prior_type": "" if name == "baseline" else name,
+                "few_step_prior_source": ("" if name == "baseline"
+                                          else pipeline.source),
                 "prior_rms": (float("nan") if name == "baseline"
                               else pipeline.last_prior_rms),
                 "spatial_iou": scores.spatial_iou,

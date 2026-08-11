@@ -131,6 +131,11 @@ class CogVideoXBackend(VideoBackend):
         eps = sqrt_a * v + sqrt_1ma * z
         return DenoiserState(latents=z, x0=x0, eps=eps, tau=1.0 - t / self.num_train_timesteps)
 
+    def renoise_scale(self, timestep: torch.Tensor | float) -> torch.Tensor:
+        """``sqrt(alpha_bar_t)``, the coefficient of ``x0`` in :meth:`renoise`."""
+        t = int(timestep.flatten()[0].item() if torch.is_tensor(timestep) else timestep)
+        return self.pipe.scheduler.alphas_cumprod.float()[t].sqrt()
+
     def renoise(
         self, x0: torch.Tensor, eps: torch.Tensor, timestep: torch.Tensor | float
     ) -> torch.Tensor:

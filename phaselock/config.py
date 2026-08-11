@@ -154,9 +154,22 @@ class PhaseLockConfig:
     different quantity fixed. See :mod:`phaselock.operators`, which is also the list this
     is validated against."""
 
+    few_step_prior_source: str = "latent"
+    """Which tensor the prior is measured on.
+
+    ``latent`` is the sampler state, and is what PhaseLock uses. ``x0_hat`` and
+    ``velocity`` are model outputs -- the network's current belief about the clean video,
+    and the flow field carrying the state there. See :data:`phaselock.guidance.SOURCES`."""
+
     def __post_init__(self) -> None:
+        from .guidance import SOURCES
         from .operators import OPERATORS
 
+        if self.few_step_prior_source not in SOURCES:
+            raise ValueError(
+                f"unknown phaselock.few_step_prior_source {self.few_step_prior_source!r}; "
+                f"expected one of {sorted(SOURCES)}"
+            )
         if self.few_step_prior_type not in OPERATORS:
             raise ValueError(
                 f"unknown phaselock.few_step_prior_type {self.few_step_prior_type!r}; "

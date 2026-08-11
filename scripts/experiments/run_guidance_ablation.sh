@@ -4,6 +4,7 @@
 #   scripts/experiments/run_guidance_ablation.sh                  # the staged default
 #   N=4  GUIDANCE="baseline motion" scripts/experiments/run_guidance_ablation.sh   # smoke
 #   N=24 scripts/experiments/run_guidance_ablation.sh             # prune the grid
+#   SOURCES="latent x0_hat velocity" scripts/experiments/run_guidance_ablation.sh
 #   N=0  scripts/experiments/run_guidance_ablation.sh             # all 198 take-1
 #
 # Every setting runs PhaseLock's equation (2) unchanged. Only the few-step prior differs:
@@ -48,6 +49,7 @@ export PYTHONPATH="${PYTHONPATH:-}:$PWD"
 
 N="${N:-24}"                                  # 0 means all 198 take-1 scenarios
 GUIDANCE="${GUIDANCE:-baseline motion accel jerk perr}"
+SOURCES="${SOURCES:-latent}"           # latent | x0_hat | velocity
 STRENGTH="${STRENGTH:-}"                      # blank keeps the paper's 0.05
 ROOT="${ROOT:-/data/experiments/phaselock_geophys}"
 CONFIG="${CONFIG:-configs/experiments/physics_iq.yaml}"
@@ -65,6 +67,7 @@ OVERRIDE="output__run_id=$RUN_ID"
 [ -n "$STRENGTH" ] && OVERRIDE="$OVERRIDE phaselock__guidance_strength=$STRENGTH"
 
 echo "few-step prior types: $GUIDANCE"
+echo "sources: $SOURCES"
 echo "clips: ${N:-all}   strength: ${STRENGTH:-0.05 (paper)}"
 echo "output: $ROOT/$RUN_ID"
 
@@ -80,9 +83,18 @@ step () {
 
 # The baseline first: every other number is a paired delta against it, so
 # nothing downstream is interpretable until it exists.
+# baseline is unguided, so it has no source and must not be run once per source.
 for setting in $GUIDANCE; do
-  step "guidance: $setting" \
-    python scripts/run_physics_iq.py --config "$CONFIG" --guidance "$setting" $LIMIT $OVERRIDE
+  if [ "$setting" = baseline ]; then
+    step "baseline (unguided)" \
+      python scripts/run_physics_iq.py --config "$CONFIG" --guidance baseline $LIMIT $OVERRIDE
+    continue
+  fi
+  for source in $SOURCES; do
+    step "$setting on $source" \
+      python scripts/run_physics_iq.py --config "$CONFIG" --guidance "$setting" \
+        --source "$source" $LIMIT $OVERRIDE
+  done
 done
 
 echo ""
