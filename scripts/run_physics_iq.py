@@ -20,6 +20,11 @@ directory per setting. So `videos/motion/` can be handed to the Physics-IQ repo 
 renaming, and its score compared against the one printed here. Two independent scorers
 over the same files is the check that neither is quietly wrong.
 
+`videos/few_step/` holds the 2-step generations the priors are taken from -- the prior in
+RGB, which is the only way to see what a setting is actually matching against. Kept out of
+the per-setting directories deliberately: it is the same clip for every setting, and the
+evaluator asserts a setting's directory holds exactly 198 videos.
+
 Three things differ from the original, and all three are the point:
 
 * **It scores.** The original exported mp4s and stopped, so it could not produce a number
@@ -117,8 +122,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--perspectives", type=_list, help="left,center,right; default all")
     parser.add_argument("--limit", type=int,
                         help="cap the sample count, balanced across categories")
-    parser.add_argument("--save-prior", action="store_true",
-                        help="also write the few-step prior as few_<name>.mp4")
+    parser.add_argument("--save-prior", action=argparse.BooleanOptionalAction, default=True,
+                        help="also write the few-step generation the prior is taken from, "
+                             "to videos/few_step/. On by default: it is the prior in RGB, "
+                             "and it costs only the export since the pass runs anyway")
     parser.add_argument("--overwrite", action="store_true",
                         help="regenerate videos that are already on disk")
     parser.add_argument("overrides", nargs="*")
@@ -258,9 +265,16 @@ def main() -> None:
             # The evaluator-facing file: the pipeline's own frames, under the name the
             # Physics-IQ repo expects.
             export_to_video(frames, str(path), fps=spec.default_fps)
+            # The few-step generation is identical for every setting on a clip -- same
+            # seed, same two steps, no guidance -- so it is written once, and to its own
+            # directory. Alongside the others it would both duplicate 12 times and break
+            # the official evaluator, which counts the .mp4 files in a setting's directory
+            # and asserts exactly 198.
             if prior is not None:
-                export_to_video(prior, str(path.parent / f"few_{video_name}"),
-                                fps=spec.default_fps)
+                few_path = output / "videos" / "few_step" / video_name
+                if not few_path.exists() or args.overwrite:
+                    few_path.parent.mkdir(parents=True, exist_ok=True)
+                    export_to_video(prior, str(few_path), fps=spec.default_fps)
 
             # The full clip goes to disk -- the official evaluator does its own trim --
             # but only the benchmark window is scored here.
