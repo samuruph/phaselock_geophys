@@ -102,6 +102,19 @@ def resolve_guidance(name: str) -> str:
     return GUIDANCE_ALIASES.get(name, name)
 
 
+def setting_name(prior_type: str, source: str) -> str:
+    """The directory and row key for one cell of the grid.
+
+    It must carry the *source* as well as the prior type. Keyed by type alone,
+    `motion_on_x0_hat` found `videos/motion/` already full from the latent run and skipped
+    every clip -- reporting OK in 58 seconds and producing results that were silently the
+    latent ones. Two of the three sources had never actually run.
+    """
+    if prior_type == "baseline":
+        return "baseline"
+    return f"{prior_type}_on_{source}"
+
+
 def _list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -234,8 +247,10 @@ def main() -> None:
         config.backend.name, num_frames, spec.default_fps, score_frames,
         BENCHMARK_SECONDS,
     )
-    for name in guidances:
-        (output / "videos" / name).mkdir(parents=True, exist_ok=True)
+    source = args.source or config.phaselock.few_step_prior_source
+    settings = {name: setting_name(name, source) for name in guidances}
+    for folder in settings.values():
+        (output / "videos" / folder).mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
     for sample in track(usable, "physics-iq", unit="clip"):
@@ -247,7 +262,7 @@ def main() -> None:
         video_name = sample.meta["output_name"]
 
         for name in guidances:
-            path = output / "videos" / name / video_name
+            path = output / "videos" / settings[name] / video_name
             if path.exists() and not args.overwrite:
                 continue
 
@@ -286,6 +301,7 @@ def main() -> None:
                 "category": sample.category,
                 "perspective": sample.meta["perspective"],
                 "guidance": name,
+                "setting": settings[name],
                 "guidance_strength": (0.0 if name == "baseline"
                                       else config.phaselock.guidance_strength),
                 "few_step_prior_type": "" if name == "baseline" else name,
@@ -310,7 +326,10 @@ def main() -> None:
                     "Pass --overwrite to redo them.")
         return
 
-    path = output / "physics_iq.csv"
+    # One file per setting. A shared physics_iq.csv opened with "w" meant each invocation
+    # erased the last one's rows, so a five-setting ablation ended with only the fifth --
+    # and nothing to compare it against. report_guidance.py globs these.
+    path = output / f"physics_iq_{settings[guidances[-1]]}.csv"
     with open(path, "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()

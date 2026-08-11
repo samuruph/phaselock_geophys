@@ -22,6 +22,7 @@ PhaseLock's "the first frame remains unmodified as it serves as the image condit
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Callable
 
@@ -70,6 +71,56 @@ def _span_residual(z: torch.Tensor) -> torch.Tensor:
         .permute(2, 3, 0, 1)
         .contiguous()
     )
+
+
+@functools.lru_cache(maxsize=None)
+def amplification(name: str, frames: int = 13, trials: int = 16) -> float:
+    """How far a correction written onto the latent overshoots what was asked for.
+
+    A frame is shared between neighbouring windows: frame ``i`` is in both ``z[i]-z[i-1]``
+    and ``z[i+1]-z[i]``, so moving it to correct one window necessarily disturbs the
+    other. Writing ``d`` onto ``z`` therefore moves ``T(z)`` by ``T(d)``, not by ``d``,
+    and the number of neighbours disturbed is the operator's order: 1 for ``motion``, 2
+    for ``accel``, 3 for ``jerk``. Measured overshoot is 1.4x, 2.3x and 4.1x, matching
+    ``sqrt(C(2n, n))`` for an n-th difference of an uncorrelated field.
+
+    **This is not a claim that guidance should be exact.** PhaseLock is a soft nudge with
+    a decaying lambda -- it biases the trajectory toward the prior's motion rather than
+    projecting onto it, and disturbing neighbours is part of that diffuse bias. What is
+    not intended is the *size* of the intervention changing by 4x when the operator
+    changes, which at third order stops the iteration settling: over a guided schedule the
+    latent inflates and the video dissolves.
+
+    So this exists to keep a nudge a nudge. Dividing lambda by the overshoot, relative to
+    ``motion``, makes one unit of lambda the same intervention for every operator -- which
+    the ablation needs anyway, since otherwise the settings are not comparable and a
+    ranking would partly measure step size.
+
+    The operators are linear and shift-invariant along the frame axis, so this depends
+    only on the operator and the frame count, never on the clip -- hence the cache.
+    Probed rather than derived because ``perr``'s span projection has no closed form.
+    """
+    operator = OPERATORS[name]
+    ratios = []
+    for seed in range(trials):
+        generator = torch.Generator().manual_seed(seed)
+        z = torch.randn(frames, 4, 2, 2, dtype=torch.float64, generator=generator)
+        d = torch.randn(frames, 4, 2, 2, dtype=torch.float64, generator=generator)
+        moved = z.clone()
+        moved[operator.anchor:] = z[operator.anchor:] + d[operator.anchor:]
+        ratios.append(
+            float((operator(moved) - operator(z)).norm() / d[operator.anchor:].norm())
+        )
+    return sum(ratios) / len(ratios)
+
+
+def strength_scale(name: str, frames: int = 13, reference: str = "motion") -> float:
+    """Factor on ``lambda`` that makes ``name`` as strong an intervention as ``reference``.
+
+    Normalised to ``motion`` rather than to 1 so the published arm is left exactly alone:
+    ``strength_scale("motion") == 1.0``, and the reproduction stays byte-identical.
+    """
+    return amplification(reference, frames) / amplification(name, frames)
 
 
 @dataclass(frozen=True)

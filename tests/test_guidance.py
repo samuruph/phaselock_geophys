@@ -469,3 +469,92 @@ class TestPriorSource:
         out = get_operator(name)(z)
         assert out.dtype == dtype
         assert torch.isfinite(out.float()).all()
+
+
+# -- step size across operators ---------------------------------------------
+
+
+class TestStrengthNormalisation:
+    """A frame is shared between neighbouring windows, so correcting one disturbs the
+    others and the write overshoots by the operator's order. PhaseLock is a soft nudge, so
+    that spreading is not itself wrong -- but a nudge 4x larger than intended is, and at
+    third order it stopped the schedule settling and turned the video to noise.
+    """
+
+    def test_the_overshoot_matches_the_closed_form_for_a_difference(self):
+        """An n-th difference of an uncorrelated field grows by sqrt(C(2n, n))."""
+        import math
+
+        from phaselock.operators import amplification
+
+        for name, order in (("motion", 1), ("accel", 2), ("jerk", 3)):
+            predicted = math.sqrt(math.comb(2 * order, order))
+            assert amplification(name) == pytest.approx(predicted, rel=0.1)
+
+    def test_the_projection_barely_overshoots(self):
+        """`perr` is a projection, not a difference, so it has nothing to amplify."""
+        from phaselock.operators import amplification
+
+        assert amplification("perr") == pytest.approx(1.0, abs=0.15)
+
+    def test_motion_is_left_exactly_alone(self):
+        """The published arm must not move. Normalising relative to it guarantees that."""
+        from phaselock.operators import strength_scale
+
+        assert strength_scale("motion") == 1.0
+
+        guidance = LatentDeltaGuidance(
+            extract_motion_prior(canonical_latent()), COGVIDEOX_5B, total_steps=50,
+        )
+        assert guidance.compute_schedule(0) == pytest.approx(0.05)
+
+    @pytest.mark.parametrize("name", ["accel", "jerk"])
+    def test_a_higher_order_operator_takes_a_smaller_step(self, name):
+        from phaselock.guidance import extract_prior
+
+        guidance = LatentDeltaGuidance(
+            extract_prior(canonical_latent(), few_step_prior_type=name), COGVIDEOX_5B,
+            few_step_prior_type=name, total_steps=50,
+        )
+        plain = LatentDeltaGuidance(
+            extract_motion_prior(canonical_latent()), COGVIDEOX_5B, total_steps=50,
+        )
+        assert guidance.compute_schedule(0) < plain.compute_schedule(0)
+
+    def test_normalisation_can_be_turned_off(self):
+        """The raw rule stays reachable, so 'jerk diverges' remains demonstrable."""
+        from phaselock.guidance import extract_prior
+
+        raw = LatentDeltaGuidance(
+            extract_prior(canonical_latent(), few_step_prior_type="jerk"), COGVIDEOX_5B,
+            few_step_prior_type="jerk", total_steps=50, normalise_strength=False,
+        )
+        assert raw.compute_schedule(0) == pytest.approx(0.05)
+
+    def test_the_normalised_step_stops_the_latent_running_away(self):
+        """The failure this exists for, end to end: iterate the update and watch |z|.
+
+        Unnormalised, `jerk` inflates the latent 2.3x over a guided schedule -- which is a
+        video that dissolves partway through. Normalised it is 1.25x: much closer to
+        `motion`'s 0.90x, though not equal to it, because scaling fixes the *size* of the
+        overshoot and not its direction. The correction is still a high-passed version of
+        the error rather than the error, so `jerk` remains the least well-behaved setting.
+        """
+        from phaselock.guidance import extract_prior
+
+        target = extract_prior(canonical_latent(seed=1), few_step_prior_type="jerk")
+        grew = {}
+        for normalise in (False, True):
+            guidance = LatentDeltaGuidance(
+                target, COGVIDEOX_5B, few_step_prior_type="jerk", total_steps=50,
+                guide_start=0, guide_end=25, normalise_strength=normalise,
+            )
+            z = from_canonical(canonical_latent(), COGVIDEOX_5B)
+            start = z.norm()
+            for step in range(25):
+                z = guidance.apply(z, guidance.compute_schedule(step))
+            grew[normalise] = float(z.norm() / start)
+
+        assert grew[False] > 2.0, "expected the raw rule to inflate the latent"
+        assert grew[True] < 1.4, "the normalised step should keep it bounded"
+        assert grew[True] < grew[False] / 1.5, "normalising should roughly halve the growth"

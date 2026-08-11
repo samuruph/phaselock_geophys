@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from .backends.base import LatentSpec, from_canonical, to_canonical
-from .operators import get_operator
+from .operators import get_operator, strength_scale
 
 SOURCES = ("latent", "x0_hat", "velocity")
 """Which tensor the frame operator is measured on.
@@ -88,6 +88,10 @@ class LatentDeltaGuidance:
         guide_start: First step at which guidance applies.
         guide_end: First step at which it stops. Defaults to ``total_steps // 2``.
         total_steps: Number of denoising steps in the guided pass.
+        normalise_strength: Scale ``lambda`` so one unit is the same intervention for
+            every operator, relative to ``motion``. On by default; without it a ranking
+            partly measures step size, and ``jerk`` diverges. See
+            :func:`phaselock.operators.amplification`.
         few_step_prior_type: Which quantity the few-step pass was mined for and this pass
             is held to -- ``motion`` is PhaseLock's own first difference. See
             :mod:`phaselock.operators`.
@@ -104,6 +108,7 @@ class LatentDeltaGuidance:
         few_step_prior_type: str = "motion",
         source: str = "latent",
         backend: Any = None,
+        normalise_strength: bool = True,
     ):
         if motion_prior.ndim != 4:
             raise ValueError(
@@ -130,6 +135,17 @@ class LatentDeltaGuidance:
         self.total_steps = total_steps
         self._previous_latents: Optional[torch.Tensor] = None
 
+        # A frame is shared between neighbouring windows, so correcting one disturbs its
+        # neighbours and the write overshoots by the operator's order -- 1.4x for motion,
+        # 4.1x for jerk. PhaseLock is a soft nudge, so that diffusion is not itself wrong;
+        # a 4x-larger nudge is, and at third order it stops the schedule settling at all.
+        # Scaling relative to `motion` keeps the published arm exactly as it was.
+        frames = motion_prior.shape[0] + self.few_step_prior_type.anchor
+        self.strength_scale = (
+            strength_scale(self.few_step_prior_type.name, frames)
+            if normalise_strength else 1.0
+        )
+
         if self.guide_end <= self.guide_start:
             raise ValueError(
                 f"guide_end ({self.guide_end}) must exceed guide_start ({self.guide_start})"
@@ -144,7 +160,7 @@ class LatentDeltaGuidance:
         if step_index < self.guide_start or step_index >= self.guide_end:
             return 0.0
         progress = (step_index - self.guide_start) / (self.guide_end - self.guide_start)
-        return self.guidance_strength * (1.0 - progress)
+        return self.guidance_strength * (1.0 - progress) * self.strength_scale
 
     def __call__(
         self,

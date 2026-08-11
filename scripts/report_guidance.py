@@ -72,7 +72,7 @@ def setting_of(row: dict) -> str:
 
 def load_rows(run_dir: Path) -> list[dict]:
     rows: list[dict] = []
-    for path in sorted(run_dir.rglob("physics_iq.csv")):
+    for path in sorted(run_dir.rglob("physics_iq_*.csv")):
         with open(path, newline="") as handle:
             for row in csv.DictReader(handle):
                 for key in ("spatial_iou", "spatiotemporal_iou", "weighted_spatial_iou",
@@ -102,7 +102,7 @@ def main() -> None:
     args = parse_args()
     rows = load_rows(args.run_dir)
     if not rows:
-        raise SystemExit(f"no physics_iq.csv under {args.run_dir}")
+        raise SystemExit(f"no physics_iq_*.csv under {args.run_dir}")
 
     by_setting: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
