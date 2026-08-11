@@ -161,8 +161,11 @@ class PhaseLockPipeline:
             **shared,
             num_inference_steps=self.few_steps,
             generator=torch.Generator(device=device).manual_seed(seed),
+            # _callback_inputs, not a literal: requesting noise_pred without extending
+            # the pipeline's allow-list is rejected by diffusers' own validation, and the
+            # few-step pass needs it just as much as the guided one.
             **({"callback_on_step_end": capture,
-                "callback_on_step_end_tensor_inputs": ["latents", "noise_pred"]}
+                "callback_on_step_end_tensor_inputs": self._callback_inputs()}
                if capture is not None else {}),
         ).frames[0]
 
@@ -206,7 +209,7 @@ class PhaseLockPipeline:
             callback_on_step_end_tensor_inputs=self._callback_inputs(),
         ).frames[0]
 
-        del few_latents, motion_prior
+        del source_trajectory, motion_prior
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
