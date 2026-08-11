@@ -2,7 +2,7 @@
 # Which GeoPhys signal, held fixed during sampling, helps Physics-IQ most?
 #
 #   scripts/experiments/run_guidance_ablation.sh                  # the staged default
-#   N=4  ARMS="baseline motion" scripts/experiments/run_guidance_ablation.sh   # smoke test
+#   N=4  GUIDANCE="baseline motion" scripts/experiments/run_guidance_ablation.sh   # smoke
 #   N=24 scripts/experiments/run_guidance_ablation.sh             # prune the grid
 #   N=0  scripts/experiments/run_guidance_ablation.sh             # all 198 take-1
 #
@@ -18,9 +18,9 @@
 # accel and jerk read 72.6/67.3/67.2. So `motion` is the weakest of the four, and an arm
 # guided on `perr` should beat it. See docs/RESULTS.md.
 #
-# One driver invocation per arm rather than one for all of them: the arms are hours apart
+# One driver invocation per setting rather than one for all of them: they are hours apart
 # in wall clock, and a failure in the fourth must not throw away the first three. Videos
-# and the CSV are keyed by arm, and the driver skips clips already on disk, so re-running
+# and rows are keyed by setting, and the driver skips clips already on disk, so re-running
 # resumes rather than repeats.
 #
 # ---- on STRENGTH, before comparing arms -------------------------------------------
@@ -40,14 +40,14 @@
 #
 # Every guided run therefore prints the measured prior RMS per arm. Read it on the first
 # small run. If the arms are within a small factor, one lambda is fair; if they are orders
-# apart, sweep STRENGTH per arm before believing any ranking.
+# apart, sweep STRENGTH per setting before believing any ranking.
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 export PYTHONPATH="${PYTHONPATH:-}:$PWD"
 
 N="${N:-24}"                                  # 0 means all 198 take-1 scenarios
-ARMS="${ARMS:-baseline motion accel jerk perr}"
+GUIDANCE="${GUIDANCE:-baseline motion accel jerk perr}"
 STRENGTH="${STRENGTH:-}"                      # blank keeps the paper's 0.05
 ROOT="${ROOT:-/data/experiments/phaselock_geophys}"
 CONFIG="${CONFIG:-configs/experiments/physics_iq.yaml}"
@@ -64,7 +64,7 @@ LIMIT=""; [ "$N" != 0 ] && LIMIT="--limit $N"
 OVERRIDE="output__run_id=$RUN_ID"
 [ -n "$STRENGTH" ] && OVERRIDE="$OVERRIDE phaselock__guidance_strength=$STRENGTH"
 
-echo "arms: $ARMS"
+echo "few-step prior types: $GUIDANCE"
 echo "clips: ${N:-all}   strength: ${STRENGTH:-0.05 (paper)}"
 echo "output: $ROOT/$RUN_ID"
 
@@ -78,16 +78,16 @@ step () {
   else echo "## FAILED $(date +%H:%M:%S) -- continuing"; fi
 }
 
-# The baseline first and alone: every other arm's number is a paired delta against it, so
+# The baseline first: every other number is a paired delta against it, so
 # nothing downstream is interpretable until it exists.
-for arm in $ARMS; do
-  step "arm: $arm" \
-    python scripts/run_physics_iq.py --config "$CONFIG" --arms "$arm" $LIMIT $OVERRIDE
+for setting in $GUIDANCE; do
+  step "guidance: $setting" \
+    python scripts/run_physics_iq.py --config "$CONFIG" --guidance "$setting" $LIMIT $OVERRIDE
 done
 
 echo ""
 echo "############################################################"
-echo "## ALL ARMS ATTEMPTED -- finished $(date +%H:%M:%S)"
+echo "## ALL SETTINGS ATTEMPTED -- finished $(date +%H:%M:%S)"
 echo "############################################################"
-echo "Videos: $ROOT/$RUN_ID/**/videos/<arm>/, named as the official Physics-IQ evaluator"
+echo "Videos: $ROOT/$RUN_ID/**/videos/<setting>/, named as the official Physics-IQ evaluator"
 echo "expects. Hand a directory to that repo and compare its score with the printed one."

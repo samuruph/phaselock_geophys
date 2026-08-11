@@ -251,8 +251,8 @@ class TestFrameOperators:
         from phaselock.guidance import extract_prior
 
         z = canonical_latent()
-        prior = extract_prior(canonical_latent(seed=1), operator=name)
-        guidance = LatentDeltaGuidance(prior, COGVIDEOX_5B, operator=name, total_steps=50)
+        prior = extract_prior(canonical_latent(seed=1), few_step_prior_type=name)
+        guidance = LatentDeltaGuidance(prior, COGVIDEOX_5B, few_step_prior_type=name, total_steps=50)
 
         guided = to_canonical(
             guidance.apply(from_canonical(z, COGVIDEOX_5B), 0.5), COGVIDEOX_5B
@@ -271,7 +271,7 @@ class TestFrameOperators:
 
         z = canonical_latent()
         guidance = LatentDeltaGuidance(
-            extract_prior(z, operator=name), COGVIDEOX_5B, operator=name, total_steps=50
+            extract_prior(z, few_step_prior_type=name), COGVIDEOX_5B, few_step_prior_type=name, total_steps=50
         )
         got = to_canonical(
             guidance.apply(from_canonical(z, COGVIDEOX_5B), 0.9), COGVIDEOX_5B
@@ -285,8 +285,8 @@ class TestFrameOperators:
 
         z = canonical_latent()
         guidance = LatentDeltaGuidance(
-            extract_prior(canonical_latent(seed=2), operator=name),
-            COGVIDEOX_5B, operator=name, total_steps=50,
+            extract_prior(canonical_latent(seed=2), few_step_prior_type=name),
+            COGVIDEOX_5B, few_step_prior_type=name, total_steps=50,
         )
         batched = from_canonical(z, COGVIDEOX_5B)
         assert torch.equal(guidance.apply(batched, 0.0), batched)
@@ -298,8 +298,8 @@ class TestFrameOperators:
         from phaselock.guidance import extract_prior
 
         z = canonical_latent()
-        prior = extract_prior(from_canonical(z, spec), spec, operator=name)
-        assert torch.equal(prior, extract_prior(z, operator=name))
+        prior = extract_prior(from_canonical(z, spec), spec, few_step_prior_type=name)
+        assert torch.equal(prior, extract_prior(z, few_step_prior_type=name))
 
     def test_the_residual_operator_is_fitted_per_position_not_across_the_frame(self):
         """Settles the design choice, on a case where the two provably differ.

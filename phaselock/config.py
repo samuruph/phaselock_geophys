@@ -146,8 +146,8 @@ class PhaseLockConfig:
     guidance_strength: float = 0.05
     guide_start: int = 0
     guide_end: Optional[int] = None
-    prior: str = "motion"
-    """Which frame operator the guidance target is built from.
+    few_step_prior_type: str = "motion"
+    """Which quantity the few-step prior is built from, and the full pass is held to.
 
     ``motion`` is PhaseLock's own first-order latent delta, i.e. the published method.
     ``accel``, ``jerk`` and ``perr`` are the ablation: the identical mechanism holding a
@@ -157,9 +157,10 @@ class PhaseLockConfig:
     def __post_init__(self) -> None:
         from .operators import OPERATORS
 
-        if self.prior not in OPERATORS:
+        if self.few_step_prior_type not in OPERATORS:
             raise ValueError(
-                f"unknown phaselock.prior {self.prior!r}; expected one of {sorted(OPERATORS)}"
+                f"unknown phaselock.few_step_prior_type {self.few_step_prior_type!r}; "
+                f"expected one of {sorted(OPERATORS)}"
             )
 
 

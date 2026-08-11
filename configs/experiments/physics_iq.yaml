@@ -20,14 +20,14 @@ generation:
   guidance_scale: 6.0
   seed: 42
 
-# The paper's settings. `prior` is the axis this experiment varies; `motion` reproduces
-# PhaseLock as published.
+# The paper's settings. `few_step_prior_type` is the axis this experiment varies;
+# `motion` reproduces PhaseLock as published.
 phaselock:
   few_steps: 2
   guidance_strength: 0.05
   guide_start: 0
   guide_end: 25
-  prior: motion
+  few_step_prior_type: motion
 
 output:
   name: physics_iq

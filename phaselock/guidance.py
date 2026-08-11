@@ -34,7 +34,7 @@ from .operators import get_operator
 def extract_prior(
     few_latents: torch.Tensor,
     spec: Optional[LatentSpec] = None,
-    operator: str = "motion",
+    few_step_prior_type: str = "motion",
 ) -> torch.Tensor:
     """Apply a frame operator to the few-step pass, giving the target to match.
 
@@ -47,7 +47,7 @@ def extract_prior(
         few_latents: Latents from the few-step pass, canonical ``(T, C, H, W)`` or
             batched in ``spec``'s layout.
         spec: Required only if ``few_latents`` is batched.
-        operator: Name from :data:`phaselock.operators.OPERATORS`.
+        few_step_prior_type: Name from :data:`phaselock.operators.OPERATORS`.
 
     Returns:
         Canonical ``(T - anchor, C, H, W)`` prior.
@@ -58,14 +58,14 @@ def extract_prior(
         few_latents = to_canonical(few_latents, spec)
     if few_latents.ndim != 4:
         raise ValueError(f"expected (T, C, H, W) latents, got {tuple(few_latents.shape)}")
-    return get_operator(operator)(few_latents)
+    return get_operator(few_step_prior_type)(few_latents)
 
 
 def extract_motion_prior(
     few_latents: torch.Tensor, spec: Optional[LatentSpec] = None
 ) -> torch.Tensor:
     """PhaseLock's first-difference prior. Kept as the name the paper uses."""
-    return extract_prior(few_latents, spec, operator="motion")
+    return extract_prior(few_latents, spec, few_step_prior_type="motion")
 
 
 class LatentDeltaGuidance:
@@ -79,6 +79,9 @@ class LatentDeltaGuidance:
         guide_start: First step at which guidance applies.
         guide_end: First step at which it stops. Defaults to ``total_steps // 2``.
         total_steps: Number of denoising steps in the guided pass.
+        few_step_prior_type: Which quantity the few-step pass was mined for and this pass
+            is held to -- ``motion`` is PhaseLock's own first difference. See
+            :mod:`phaselock.operators`.
     """
 
     def __init__(
@@ -89,7 +92,7 @@ class LatentDeltaGuidance:
         guide_start: int = 0,
         guide_end: Optional[int] = None,
         total_steps: int = 50,
-        operator: str = "motion",
+        few_step_prior_type: str = "motion",
     ):
         if motion_prior.ndim != 4:
             raise ValueError(
@@ -99,7 +102,7 @@ class LatentDeltaGuidance:
             raise ValueError(f"guidance_strength must be non-negative, got {guidance_strength}")
 
         self.motion_prior = motion_prior
-        self.operator = get_operator(operator)
+        self.few_step_prior_type = get_operator(few_step_prior_type)
         self.spec = spec
         self.guidance_strength = guidance_strength
         self.guide_start = guide_start
@@ -155,16 +158,16 @@ class LatentDeltaGuidance:
         Converts to canonical form first, so one implementation covers every layout.
         """
         canonical = to_canonical(latents, self.spec)
-        anchor = self.operator.anchor
+        anchor = self.few_step_prior_type.anchor
         expected = canonical.shape[0] - anchor
         if expected != self.motion_prior.shape[0]:
             raise ValueError(
-                f"{self.operator.name} prior covers {self.motion_prior.shape[0]} windows but "
+                f"{self.few_step_prior_type.name} prior covers {self.motion_prior.shape[0]} windows but "
                 f"the latents give {expected}"
             )
 
         prior = self.motion_prior.to(canonical.device, canonical.dtype)
-        current = self.operator(canonical)
+        current = self.few_step_prior_type(canonical)
 
         guided = canonical.clone()
         guided[anchor:] = canonical[anchor:] + strength * (prior - current)

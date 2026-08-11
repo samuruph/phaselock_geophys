@@ -32,7 +32,7 @@ class PhaseLockPipeline:
         guidance_strength: float = 0.05,
         guide_start: int = 0,
         guide_end: Optional[int] = None,
-        operator: str = "motion",
+        few_step_prior_type: str = "motion",
     ):
         self.backend = backend
         self.few_steps = few_steps
@@ -42,7 +42,7 @@ class PhaseLockPipeline:
         self.guide_end = guide_end if guide_end is not None else full_steps // 2
         # Which quantity the few-step pass is mined for and the full pass is held to.
         # "motion" is PhaseLock as published; the rest are the ablation.
-        self.operator = operator
+        self.few_step_prior_type = few_step_prior_type
         self.last_prior_rms: float = float("nan")
 
     @property
@@ -110,7 +110,7 @@ class PhaseLockPipeline:
         ).frames[0]
 
         few_latents = self.backend.encode(self._frames_to_tensor(few_result).to(device))
-        motion_prior = extract_prior(few_latents, operator=self.operator)
+        motion_prior = extract_prior(few_latents, few_step_prior_type=self.few_step_prior_type)
         # Recorded so the ablation can answer whether one strength is comparable across
         # operators. lambda = 0.05 was tuned for first differences; each further
         # difference amplifies whatever noise the 2-step pass carries, so a higher-order
@@ -126,7 +126,7 @@ class PhaseLockPipeline:
             guide_start=self.guide_start,
             guide_end=self.guide_end,
             total_steps=self.full_steps,
-            operator=self.operator,
+            few_step_prior_type=self.few_step_prior_type,
         )
 
         # Stage 2: same seed, full length, guided toward the prior.
