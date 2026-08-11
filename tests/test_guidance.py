@@ -453,3 +453,19 @@ class TestPriorSource:
         first = guidance(None, 0, torch.tensor(0.0), dict(kwargs))
         assert torch.equal(first["latents"], latents)   # no predecessor yet
         assert guidance._previous_latents is not None   # ... but it is remembered
+
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+    @pytest.mark.parametrize("name", ["motion", "accel", "jerk", "perr"])
+    def test_every_operator_survives_the_dtype_the_sampler_actually_uses(self, name, dtype):
+        """A guided sampler hands the callback bfloat16 latents.
+
+        `linalg.pinv` rejects half precision outright, so `perr` raised mid-generation on
+        the first real run while the CPU tests -- which use float64 -- all passed. The
+        residual now solves in float32 and hands back the caller's dtype.
+        """
+        from phaselock.operators import get_operator
+
+        z = torch.randn(FRAMES, CHANNELS, HEIGHT, WIDTH, dtype=dtype).cumsum(0)
+        out = get_operator(name)(z)
+        assert out.dtype == dtype
+        assert torch.isfinite(out.float()).all()

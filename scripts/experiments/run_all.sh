@@ -32,7 +32,9 @@ ROOT="${ROOT:-/data/experiments/phaselock_geophys}"
 # test that pins it.
 RUN_ID="${RUN_ID:-$(python -c "from phaselock.config import default_run_id
 print(default_run_id($N, '$RESOLUTION'))")}"
-ID="output__run_id=$RUN_ID"
+# root as well as run id: ROOT otherwise names only the log directory, and a
+# non-default ROOT would silently write results somewhere else.
+ID="output__root=$ROOT output__run_id=$RUN_ID"
 
 # Log to the run's own folder. Piping through `tee` by hand is easy to forget, and the
 # one run you forget it on is the one you need the log for.

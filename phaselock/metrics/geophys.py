@@ -171,6 +171,14 @@ def residual_vectors(trajectory: torch.Tensor, order: int = 3) -> torch.Tensor:
             f"got {trajectory.shape[-2]}"
         )
 
+    # linalg.pinv rejects half precision, and a guided sampler hands us bfloat16 latents.
+    # Upcast for the solve and hand back the caller's dtype: the projection is a least
+    # squares fit whose conditioning is poor in 16 bits anyway, so this is the right
+    # precision to do it in regardless of what pinv would accept.
+    original = trajectory.dtype
+    if original not in (torch.float32, torch.float64):
+        trajectory = trajectory.float()
+
     # (..., N, order, D) windows of past frames, and the frame each one predicts.
     windows = trajectory.unfold(-2, order, 1)[..., :-1, :, :]   # (..., N, D, order)
     past = windows.transpose(-1, -2)                            # (..., N, order, D)
@@ -181,12 +189,12 @@ def residual_vectors(trajectory: torch.Tensor, order: int = 3) -> torch.Tensor:
     basis = past[..., :-1, :] - anchor.unsqueeze(-2)            # (..., N, order-1, D)
     offset = target - anchor                                    # (..., N, D)
     if basis.shape[-2] == 0:
-        return offset
+        return offset.to(original)
     design = basis.transpose(-1, -2)                            # (..., N, D, order-1)
     # pinv rather than lstsq: differentiable, and tolerant of rank-deficient windows
     # (a stationary segment makes the basis collapse).
     coefficients = torch.linalg.pinv(design) @ offset.unsqueeze(-1)
-    return offset - (design @ coefficients).squeeze(-1)
+    return (offset - (design @ coefficients).squeeze(-1)).to(original)
 
 
 def prediction_residuals(

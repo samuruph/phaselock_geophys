@@ -51,7 +51,7 @@ N="${N:-24}"                                  # 0 means all 198 take-1 scenarios
 GUIDANCE="${GUIDANCE:-baseline motion accel jerk perr}"
 SOURCES="${SOURCES:-latent}"           # latent | x0_hat | velocity
 STRENGTH="${STRENGTH:-}"                      # blank keeps the paper's 0.05
-ROOT="${ROOT:-/data/experiments/phaselock_geophys}"
+ROOT="${ROOT:-/data/experiments/phaselock_prior_ablation}"
 CONFIG="${CONFIG:-configs/experiments/physics_iq.yaml}"
 
 RUN_ID="${RUN_ID:-$(python -c "from phaselock.config import default_run_id
@@ -63,7 +63,10 @@ exec > >(tee -a "$LOG") 2>&1
 echo "logging to $LOG"
 
 LIMIT=""; [ "$N" != 0 ] && LIMIT="--limit $N"
-OVERRIDE="output__run_id=$RUN_ID"
+# output__root as well as the run id: without it the driver writes under
+# OutputConfig's default and ROOT only ever names the log directory, which is
+# how an empty folder gets created next to the real results.
+OVERRIDE="output__root=$ROOT output__run_id=$RUN_ID"
 [ -n "$STRENGTH" ] && OVERRIDE="$OVERRIDE phaselock__guidance_strength=$STRENGTH"
 
 echo "few-step prior types: $GUIDANCE"

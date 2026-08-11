@@ -437,7 +437,7 @@ reduce to that shape before any statistic is touched:
 | `s_t` [`speeds`](../phaselock/metrics/geophys.py#L85) | `(T−1,)` | `‖v_t‖₂` |
 | `a_t` [`accelerations`](../phaselock/metrics/geophys.py#L134) | `(T−2, D)` | `v[1:] − v[:−1]`, i.e. the second difference of `Z` |
 | `θ_t` [`turning_angles`](../phaselock/metrics/geophys.py#L90) | `(T−2,)` | see below |
-| `ε_t` [`prediction_residuals`](../phaselock/metrics/geophys.py#L192) | `(T−order,)` | see below |
+| `ε_t` [`prediction_residuals`](../phaselock/metrics/geophys.py#L200) | `(T−order,)` | see below |
 
 **`θ_t`, the turning angle.** Normalise both displacements, then take the half-angle form:
 
@@ -468,7 +468,7 @@ for why the paper's literal global fit is degenerate.
 
 **The five summaries.** `φ_speed = std({s_t})`, `φ_curv = mean({θ_t})`,
 `φ_ang = std({θ_t})`, `φ_accel = mean({‖a_t‖²})`, `φ_perr = mean({‖ε_t‖})` —
-[`geophys_statistics`](../phaselock/metrics/geophys.py#L334). Standard deviations are
+[`geophys_statistics`](../phaselock/metrics/geophys.py#L342). Standard deviations are
 **population**, not sample. Note again `accel` is squared and `perr` is not; that
 asymmetry is the paper's.
 
