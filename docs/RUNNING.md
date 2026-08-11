@@ -225,6 +225,8 @@ output can be traced back to the exact settings.
 | | `reconstruction_check` | invert one clip, resample, report PSNR to `reconstruction.json` |
 | `metrics` | `ar_order`, `residual_fit`, `ridge_lambda`, `bootstrap_resamples` | statistic options |
 | `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed` | sampling |
+| `phaselock` | `few_steps`, `guidance_strength`, `guide_start`, `guide_end` | Latent Delta Guidance, at the paper's defaults. `guide_end: null` resolves to half of `generation.num_steps` |
+| | `prior` | which signal the guidance target is built from. `motion` is PhaseLock's own first-order latent delta |
 | | `negative_prompt` | passed through to the pipeline; `null` by default |
 | `output` | `root`, `run_id`, `name` | artefacts land in `{root}/{run_id}/{backend}/{dataset}/{name}/` |
 | | `backend` / `dataset` | filled in automatically from `backend.name` and `data.name`; set by hand only to file a run elsewhere |

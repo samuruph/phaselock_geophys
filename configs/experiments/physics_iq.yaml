@@ -1,0 +1,33 @@
+# PhaseLock on Physics-IQ: guided against unguided, on the paper's own benchmark.
+#
+#   python scripts/run_physics_iq.py --config configs/experiments/physics_iq.yaml
+#
+# CogVideoX-5B-I2V because the benchmark is image-conditioned and it is the only I2V
+# checkpoint that fits a 46 GB card. Its geometry is fixed at 480x720 -- diffusers refuses
+# any other for this checkpoint -- so data.height/width are left unset deliberately.
+backend:
+  name: cogvideox_5b_i2v
+  dtype: bfloat16
+  offload: true
+
+data:
+  name: physics_iq
+  limit: 8            # 2 arms x ~5.5 min per clip; raise once the loop is trusted
+  seed: 0
+
+generation:
+  num_steps: 50
+  guidance_scale: 6.0
+  seed: 42
+
+# The paper's settings. `prior` is the axis this experiment varies; `motion` reproduces
+# PhaseLock as published.
+phaselock:
+  few_steps: 2
+  guidance_strength: 0.05
+  guide_start: 0
+  guide_end: 25
+  prior: motion
+
+output:
+  name: physics_iq

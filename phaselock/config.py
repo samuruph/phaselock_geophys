@@ -130,6 +130,28 @@ class GenerationConfig:
 
 
 @dataclass(frozen=True)
+class PhaseLockConfig:
+    """Latent Delta Guidance settings.
+
+    Its own section rather than more keys on ``generation``: these describe a *method*
+    applied during sampling, not the sampling itself, and the signal the guidance is built
+    from is the axis this study varies.
+
+    Defaults are the paper's. ``guide_end=None`` resolves to half of
+    ``generation.num_steps``, which is the paper's schedule stated relative to step count
+    rather than pinned at 25.
+    """
+
+    few_steps: int = 2
+    guidance_strength: float = 0.05
+    guide_start: int = 0
+    guide_end: Optional[int] = None
+    prior: str = "motion"
+    """Which signal the guidance target is built from. ``motion`` is PhaseLock's own
+    first-order latent delta; other values are the experiment this section exists for."""
+
+
+@dataclass(frozen=True)
 class OutputConfig:
     """Where artefacts land.
 
@@ -187,6 +209,7 @@ class Config:
     inversion: InversionConfig = field(default_factory=InversionConfig)
     metrics: MetricConfig = field(default_factory=MetricConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    phaselock: PhaseLockConfig = field(default_factory=PhaseLockConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     def resolved(self) -> "Config":
