@@ -360,10 +360,10 @@ def report(rows: list[dict], guidances: list[str]) -> None:
     print(f"\n{len(by_guidance[guidances[0]])} clips\n")
     print(f"{'metric':<24}" + "".join(f"{a:>14}" for a in guidances))
     print("-" * (24 + 14 * len(guidances)))
-    for name, higher_is_better in metrics:
-        line = f"{name:<24}"
-        for name in guidances:
-            line += f"{stats_module.mean(r[name] for r in by_guidance[name]):>14.4f}"
+    for metric, higher_is_better in metrics:
+        line = f"{metric:<24}"
+        for g in guidances:
+            line += f"{stats_module.mean(r[metric] for r in by_guidance[g]):>14.4f}"
         if higher_is_better is None:
             line += "   (control, not a score)"
         print(line)
@@ -383,14 +383,14 @@ def report(rows: list[dict], guidances: list[str]) -> None:
         print(f"{'metric':<24}" + "".join(f"{a:>14}" for a in guided))
         print("-" * (24 + 14 * len(guided)))
         control = {
-            name: {r["sample_id"]: r[name] for r in by_guidance["baseline"]}
-            for name, _ in metrics
+            metric: {r["sample_id"]: r[metric] for r in by_guidance["baseline"]}
+            for metric, _ in metrics
         }
-        for name, _ in metrics:
-            line = f"{name:<24}"
+        for metric, _ in metrics:
+            line = f"{metric:<24}"
             for g in guided:
-                deltas = [r[name] - control[name][r["sample_id"]] for r in by_guidance[g]
-                          if r["sample_id"] in control[name]]
+                deltas = [r[metric] - control[metric][r["sample_id"]] for r in by_guidance[g]
+                          if r["sample_id"] in control[metric]]
                 line += (f"{stats_module.mean(deltas):>+14.4f}" if deltas
                          else f"{'-':>14}")
             print(line)
