@@ -147,8 +147,20 @@ class PhaseLockConfig:
     guide_start: int = 0
     guide_end: Optional[int] = None
     prior: str = "motion"
-    """Which signal the guidance target is built from. ``motion`` is PhaseLock's own
-    first-order latent delta; other values are the experiment this section exists for."""
+    """Which frame operator the guidance target is built from.
+
+    ``motion`` is PhaseLock's own first-order latent delta, i.e. the published method.
+    ``accel``, ``jerk`` and ``perr`` are the ablation: the identical mechanism holding a
+    different quantity fixed. See :mod:`phaselock.operators`, which is also the list this
+    is validated against."""
+
+    def __post_init__(self) -> None:
+        from .operators import OPERATORS
+
+        if self.prior not in OPERATORS:
+            raise ValueError(
+                f"unknown phaselock.prior {self.prior!r}; expected one of {sorted(OPERATORS)}"
+            )
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Which GeoPhys signal, held fixed during sampling, helps Physics-IQ most?
+#
+#   scripts/experiments/run_guidance_ablation.sh                  # the staged default
+#   N=4  ARMS="baseline motion" scripts/experiments/run_guidance_ablation.sh   # smoke test
+#   N=24 scripts/experiments/run_guidance_ablation.sh             # prune the grid
+#   N=0  scripts/experiments/run_guidance_ablation.sh             # all 198 take-1
+#
+# Every arm runs PhaseLock's equation (2) unchanged. Only the frame operator differs:
+#
+#   motion   z[t+1] - z[t]                      PhaseLock as published
+#   accel    z[t+2] - 2z[t+1] + z[t]
+#   jerk     the third difference
+#   perr     the component orthogonal to the affine span of the previous frames
+#
+# The prediction being tested: on the VAE latent -- PhaseLock's own space -- the detection
+# study measured phi_speed, the statistic of `motion`, at 46.6%, BELOW chance, while perr,
+# accel and jerk read 72.6/67.3/67.2. So `motion` is the weakest of the four, and an arm
+# guided on `perr` should beat it. See docs/RESULTS.md.
+#
+# One driver invocation per arm rather than one for all of them: the arms are hours apart
+# in wall clock, and a failure in the fourth must not throw away the first three. Videos
+# and the CSV are keyed by arm, and the driver skips clips already on disk, so re-running
+# resumes rather than repeats.
+
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+export PYTHONPATH="${PYTHONPATH:-}:$PWD"
+
+N="${N:-24}"                                  # 0 means all 198 take-1 scenarios
+ARMS="${ARMS:-baseline motion accel jerk perr}"
+STRENGTH="${STRENGTH:-}"                      # blank keeps the paper's 0.05
+ROOT="${ROOT:-/data/experiments/phaselock_geophys}"
+CONFIG="${CONFIG:-configs/experiments/physics_iq.yaml}"
+
+RUN_ID="${RUN_ID:-$(python -c "from phaselock.config import default_run_id
+print(default_run_id($N or None, '', 'guidance'))")}"
+
+mkdir -p "$ROOT/$RUN_ID"
+LOG="$ROOT/$RUN_ID/run.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "logging to $LOG"
+
+LIMIT=""; [ "$N" != 0 ] && LIMIT="--limit $N"
+OVERRIDE="output__run_id=$RUN_ID"
+[ -n "$STRENGTH" ] && OVERRIDE="$OVERRIDE phaselock__guidance_strength=$STRENGTH"
+
+echo "arms: $ARMS"
+echo "clips: ${N:-all}   strength: ${STRENGTH:-0.05 (paper)}"
+echo "output: $ROOT/$RUN_ID"
+
+step () {
+  echo ""
+  echo "############################################################"
+  echo "## $1   started $(date +%H:%M:%S)"
+  echo "############################################################"
+  shift
+  if "$@"; then echo "## OK $(date +%H:%M:%S)"
+  else echo "## FAILED $(date +%H:%M:%S) -- continuing"; fi
+}
+
+# The baseline first and alone: every other arm's number is a paired delta against it, so
+# nothing downstream is interpretable until it exists.
+for arm in $ARMS; do
+  step "arm: $arm" \
+    python scripts/run_physics_iq.py --config "$CONFIG" --arms "$arm" $LIMIT $OVERRIDE
+done
+
+echo ""
+echo "############################################################"
+echo "## ALL ARMS ATTEMPTED -- finished $(date +%H:%M:%S)"
+echo "############################################################"
+echo "Videos: $ROOT/$RUN_ID/**/videos/<arm>/, named as the official Physics-IQ evaluator"
+echo "expects. Hand a directory to that repo and compare its score with the printed one."

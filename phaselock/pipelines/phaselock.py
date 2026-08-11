@@ -18,7 +18,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 from ..backends.base import VideoBackend
-from ..guidance import LatentDeltaGuidance, extract_motion_prior
+from ..guidance import LatentDeltaGuidance, extract_prior
 
 
 class PhaseLockPipeline:
@@ -32,6 +32,7 @@ class PhaseLockPipeline:
         guidance_strength: float = 0.05,
         guide_start: int = 0,
         guide_end: Optional[int] = None,
+        operator: str = "motion",
     ):
         self.backend = backend
         self.few_steps = few_steps
@@ -39,6 +40,10 @@ class PhaseLockPipeline:
         self.guidance_strength = guidance_strength
         self.guide_start = guide_start
         self.guide_end = guide_end if guide_end is not None else full_steps // 2
+        # Which quantity the few-step pass is mined for and the full pass is held to.
+        # "motion" is PhaseLock as published; the rest are the ablation.
+        self.operator = operator
+        self.last_prior_rms: float = float("nan")
 
     @property
     def pipe(self) -> Any:
@@ -105,7 +110,14 @@ class PhaseLockPipeline:
         ).frames[0]
 
         few_latents = self.backend.encode(self._frames_to_tensor(few_result).to(device))
-        motion_prior = extract_motion_prior(few_latents)
+        motion_prior = extract_prior(few_latents, operator=self.operator)
+        # Recorded so the ablation can answer whether one strength is comparable across
+        # operators. lambda = 0.05 was tuned for first differences; each further
+        # difference amplifies whatever noise the 2-step pass carries, so a higher-order
+        # prior can be larger by a factor that makes the same lambda a different
+        # intervention. If these differ by orders of magnitude, the arms are not yet a
+        # fair comparison and need a per-arm strength.
+        self.last_prior_rms = float(motion_prior.float().pow(2).mean().sqrt())
 
         guidance = LatentDeltaGuidance(
             motion_prior=motion_prior,
@@ -114,6 +126,7 @@ class PhaseLockPipeline:
             guide_start=self.guide_start,
             guide_end=self.guide_end,
             total_steps=self.full_steps,
+            operator=self.operator,
         )
 
         # Stage 2: same seed, full length, guided toward the prior.

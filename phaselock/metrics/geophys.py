@@ -149,6 +149,46 @@ def _windows(trajectory: torch.Tensor, order: int) -> tuple[torch.Tensor, torch.
     return past, target
 
 
+def residual_vectors(trajectory: torch.Tensor, order: int = 3) -> torch.Tensor:
+    """The span residual as a *vector*, shape ``(..., T - order, D)``.
+
+    ``prediction_residuals(fit="span")`` is the norm of this. It is exposed separately
+    because guidance needs the direction, not just the magnitude: matching a residual the
+    way PhaseLock matches a motion prior requires something the same shape as the latent.
+
+    Leading batch dimensions are allowed, so ``(P, T, C)`` scores ``P`` trajectories at
+    once -- which is how a full-resolution latent is handled, one trajectory per spatial
+    position. ``torch.linalg.pinv`` and ``@`` both broadcast, and the windowing uses
+    ``unfold`` rather than a Python loop so nothing here is per-position in Python.
+    """
+    if order < 1:
+        raise ValueError(f"order must be >= 1, got {order}")
+    if trajectory.ndim < 2:
+        raise ValueError(f"expected at least (T, D), got shape {tuple(trajectory.shape)}")
+    if trajectory.shape[-2] < order + 1:
+        raise ValueError(
+            f"need at least {order + 1} frames for this statistic, "
+            f"got {trajectory.shape[-2]}"
+        )
+
+    # (..., N, order, D) windows of past frames, and the frame each one predicts.
+    windows = trajectory.unfold(-2, order, 1)[..., :-1, :, :]   # (..., N, D, order)
+    past = windows.transpose(-1, -2)                            # (..., N, order, D)
+    target = trajectory[..., order:, :]                         # (..., N, D)
+
+    # Affine span through the window's frames, anchored at the most recent one.
+    anchor = past[..., -1, :]                                   # (..., N, D)
+    basis = past[..., :-1, :] - anchor.unsqueeze(-2)            # (..., N, order-1, D)
+    offset = target - anchor                                    # (..., N, D)
+    if basis.shape[-2] == 0:
+        return offset
+    design = basis.transpose(-1, -2)                            # (..., N, D, order-1)
+    # pinv rather than lstsq: differentiable, and tolerant of rank-deficient windows
+    # (a stationary segment makes the basis collapse).
+    coefficients = torch.linalg.pinv(design) @ offset.unsqueeze(-1)
+    return offset - (design @ coefficients).squeeze(-1)
+
+
 def prediction_residuals(
     trajectory: torch.Tensor,
     order: int = 3,
@@ -183,21 +223,12 @@ def prediction_residuals(
     """
     if order < 1:
         raise ValueError(f"order must be >= 1, got {order}")
-    trajectory = _check(trajectory, order + 1)
-    past, target = _windows(trajectory, order)
 
     if fit == "span":
-        # Affine span through the window's frames, anchored at the most recent one.
-        anchor = past[:, -1]                                   # (N, D)
-        basis = (past[:, :-1] - anchor.unsqueeze(1))           # (N, order-1, D)
-        offset = target - anchor                               # (N, D)
-        if basis.shape[1] == 0:
-            return _safe_norm(offset)
-        design = basis.transpose(1, 2)                         # (N, D, order-1)
-        # pinv rather than lstsq: differentiable, and tolerant of rank-deficient
-        # windows (a stationary segment makes the basis collapse).
-        coefficients = torch.linalg.pinv(design) @ offset.unsqueeze(-1)
-        return _safe_norm(offset - (design @ coefficients).squeeze(-1))
+        return _safe_norm(residual_vectors(trajectory, order=order))
+
+    trajectory = _check(trajectory, order + 1)
+    past, target = _windows(trajectory, order)
 
     if fit == "ridge":
         x = past.flatten(1)                                    # (N, order*D)

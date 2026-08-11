@@ -47,7 +47,7 @@ def test_motion_prior_requires_a_spec_for_batched_input():
 
 
 def test_motion_prior_needs_two_frames():
-    with pytest.raises(ValueError, match="at least two latent frames"):
+    with pytest.raises(ValueError, match="needs at least 2 frames"):
         extract_motion_prior(torch.randn(1, CHANNELS, HEIGHT, WIDTH))
 
 
@@ -209,3 +209,123 @@ def test_guidance_preserves_dtype():
     prior = extract_motion_prior(canonical_latent(1))
     guidance = LatentDeltaGuidance(prior, spec=COGVIDEOX_5B, guidance_strength=0.5)
     assert guidance.apply(z, strength=0.5).dtype == torch.bfloat16
+
+
+# -- the operator ablation --------------------------------------------------
+#
+# PhaseLock's T is the first difference along frames. These pin the properties that let
+# the second/third difference and the span residual ride the identical mechanism, and --
+# most importantly -- that swapping the operator in has not moved the `motion` arm, which
+# is the reproduction of the published method.
+
+
+class TestFrameOperators:
+    def test_motion_arm_is_byte_for_byte_the_published_mechanism(self):
+        """The regression that keeps the reproduction arm honest.
+
+        `motion` must apply exactly `z[1:] += lambda * (prior - (z[1:] - z[:-1]))`. If
+        generalising to operators moved this by even a rounding step, every comparison
+        against the paper's number would be against something else.
+        """
+        z = canonical_latent()
+        prior = extract_motion_prior(canonical_latent(seed=1))
+        guidance = LatentDeltaGuidance(prior, COGVIDEOX_5B, total_steps=50)
+
+        expected = z.clone()
+        expected[1:] = z[1:] + 0.05 * (prior - (z[1:] - z[:-1]))
+
+        got = to_canonical(
+            guidance.apply(from_canonical(z, COGVIDEOX_5B), 0.05), COGVIDEOX_5B
+        )
+        assert torch.equal(got, expected)
+
+    @pytest.mark.parametrize("name,anchor", [("motion", 1), ("accel", 2), ("jerk", 3),
+                                             ("perr", 3)])
+    def test_the_leading_frames_are_never_modified(self, name, anchor):
+        """The image condition depends on this, and not only for `motion`.
+
+        An order-n operator's first value depends on frames 0..n, so guidance writes to
+        z[n:] and the first n frames are the anchor. Losing this on a higher-order arm
+        would silently corrupt the conditioning frame the whole benchmark is built on.
+        """
+        from phaselock.guidance import extract_prior
+
+        z = canonical_latent()
+        prior = extract_prior(canonical_latent(seed=1), operator=name)
+        guidance = LatentDeltaGuidance(prior, COGVIDEOX_5B, operator=name, total_steps=50)
+
+        guided = to_canonical(
+            guidance.apply(from_canonical(z, COGVIDEOX_5B), 0.5), COGVIDEOX_5B
+        )
+        assert torch.equal(guided[:anchor], z[:anchor])
+        assert not torch.equal(guided[anchor:], z[anchor:])
+
+    @pytest.mark.parametrize("name", ["motion", "accel", "jerk", "perr"])
+    def test_matching_a_trajectory_against_its_own_prior_is_a_no_op(self, name):
+        """G = T(z) - T(z) = 0, so a clip already at the target must not move.
+
+        Guards the sign of the residual: with it flipped this test still passes at
+        lambda=0 but fails here, because the correction would double rather than vanish.
+        """
+        from phaselock.guidance import extract_prior
+
+        z = canonical_latent()
+        guidance = LatentDeltaGuidance(
+            extract_prior(z, operator=name), COGVIDEOX_5B, operator=name, total_steps=50
+        )
+        got = to_canonical(
+            guidance.apply(from_canonical(z, COGVIDEOX_5B), 0.9), COGVIDEOX_5B
+        )
+        assert torch.allclose(got, z, atol=1e-6)
+
+    @pytest.mark.parametrize("name", ["motion", "accel", "jerk", "perr"])
+    def test_zero_strength_is_exactly_the_unguided_latent(self, name):
+        """Keeps "guidance does nothing" distinguishable from "guidance is broken"."""
+        from phaselock.guidance import extract_prior
+
+        z = canonical_latent()
+        guidance = LatentDeltaGuidance(
+            extract_prior(canonical_latent(seed=2), operator=name),
+            COGVIDEOX_5B, operator=name, total_steps=50,
+        )
+        batched = from_canonical(z, COGVIDEOX_5B)
+        assert torch.equal(guidance.apply(batched, 0.0), batched)
+
+    @pytest.mark.parametrize("spec", SPECS, ids=SPEC_IDS)
+    @pytest.mark.parametrize("name", ["motion", "accel", "jerk", "perr"])
+    def test_every_operator_is_layout_correct(self, spec, name):
+        """The bug this whole module exists for, extended to the new operators."""
+        from phaselock.guidance import extract_prior
+
+        z = canonical_latent()
+        prior = extract_prior(from_canonical(z, spec), spec, operator=name)
+        assert torch.equal(prior, extract_prior(z, operator=name))
+
+    def test_the_residual_operator_is_fitted_per_position_not_across_the_frame(self):
+        """Settles the design choice, on a case where the two provably differ.
+
+        Per position, each (h, w) is its own C-dim trajectory. Flattening (C, H, W) into
+        one long vector instead fits a single affine span for the whole frame, which is a
+        different quantity. Build a latent whose positions have unrelated dynamics: the
+        per-position residual sees each one exactly, the flattened one cannot.
+        """
+        from phaselock.metrics.geophys import residual_vectors
+        from phaselock.operators import get_operator
+
+        generator = torch.Generator().manual_seed(7)
+        z = torch.randn(FRAMES, CHANNELS, HEIGHT, WIDTH, generator=generator,
+                        dtype=torch.float64)
+
+        got = get_operator("perr")(z)
+
+        # ... equals scoring every spatial position independently.
+        expected = torch.stack([
+            residual_vectors(z[:, :, h, w], order=3)
+            for h in range(HEIGHT) for w in range(WIDTH)
+        ])
+        expected = expected.reshape(HEIGHT, WIDTH, -1, CHANNELS).permute(2, 3, 0, 1)
+        assert torch.allclose(got, expected, atol=1e-10)
+
+        # ... and is NOT the flattened fit, so the choice is a real one.
+        flattened = residual_vectors(z.reshape(FRAMES, -1), order=3)
+        assert not torch.allclose(got.reshape(flattened.shape), flattened, atol=1e-6)

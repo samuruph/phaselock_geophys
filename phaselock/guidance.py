@@ -10,11 +10,15 @@ constraining frame-to-frame latent differences::
 with a linearly decaying schedule over ``[k_start, k_end)``. Frame 1 is the conditioning
 anchor and is never modified.
 
-This module is the Wan2.1 deliverable rather than an object of study: nothing in the
-experiment drivers calls it. It is kept correct because the original implementation
-hardcoded CogVideoX's ``(B, T, C, H, W)`` layout, and Wan's latents are ``(B, C, T, H, W)``
--- unfixed, the guidance would difference the *channel* axis and still return a tensor
-of an entirely plausible shape.
+``T`` is the *first difference along frames*, and it is the axis this repo ablates: see
+:mod:`phaselock.operators` for the second and third differences and the span residual,
+which the detection study says carry 20+ points more signal in this very space. The
+mechanism below is unchanged for all of them -- only what ``T`` measures differs.
+
+Layout correctness is load-bearing: the original implementation hardcoded CogVideoX's
+``(B, T, C, H, W)`` and Wan's latents are ``(B, C, T, H, W)`` -- unfixed, the guidance
+would difference the *channel* axis and still return a tensor of an entirely plausible
+shape.
 """
 
 from __future__ import annotations
@@ -24,18 +28,29 @@ from typing import Any, Dict, Optional
 import torch
 
 from .backends.base import LatentSpec, from_canonical, to_canonical
+from .operators import get_operator
 
 
-def extract_motion_prior(few_latents: torch.Tensor, spec: Optional[LatentSpec] = None) -> torch.Tensor:
-    """The Latent Delta Operator ``T(z) = z[2:F] - z[1:F-1]``.
+def extract_prior(
+    few_latents: torch.Tensor,
+    spec: Optional[LatentSpec] = None,
+    operator: str = "motion",
+) -> torch.Tensor:
+    """Apply a frame operator to the few-step pass, giving the target to match.
+
+    ``operator="motion"`` is PhaseLock's Latent Delta Operator ``T(z) = z[2:F] - z[1:F-1]``
+    and is the default, so existing callers are unaffected. The other operators in
+    :mod:`phaselock.operators` are the ablation: same mechanism, same shapes, a different
+    quantity held fixed.
 
     Args:
         few_latents: Latents from the few-step pass, canonical ``(T, C, H, W)`` or
             batched in ``spec``'s layout.
         spec: Required only if ``few_latents`` is batched.
+        operator: Name from :data:`phaselock.operators.OPERATORS`.
 
     Returns:
-        Canonical ``(T-1, C, H, W)`` motion prior.
+        Canonical ``(T - anchor, C, H, W)`` prior.
     """
     if few_latents.ndim == 5:
         if spec is None:
@@ -43,9 +58,14 @@ def extract_motion_prior(few_latents: torch.Tensor, spec: Optional[LatentSpec] =
         few_latents = to_canonical(few_latents, spec)
     if few_latents.ndim != 4:
         raise ValueError(f"expected (T, C, H, W) latents, got {tuple(few_latents.shape)}")
-    if few_latents.shape[0] < 2:
-        raise ValueError("a motion prior needs at least two latent frames")
-    return few_latents[1:] - few_latents[:-1]
+    return get_operator(operator)(few_latents)
+
+
+def extract_motion_prior(
+    few_latents: torch.Tensor, spec: Optional[LatentSpec] = None
+) -> torch.Tensor:
+    """PhaseLock's first-difference prior. Kept as the name the paper uses."""
+    return extract_prior(few_latents, spec, operator="motion")
 
 
 class LatentDeltaGuidance:
@@ -69,6 +89,7 @@ class LatentDeltaGuidance:
         guide_start: int = 0,
         guide_end: Optional[int] = None,
         total_steps: int = 50,
+        operator: str = "motion",
     ):
         if motion_prior.ndim != 4:
             raise ValueError(
@@ -78,6 +99,7 @@ class LatentDeltaGuidance:
             raise ValueError(f"guidance_strength must be non-negative, got {guidance_strength}")
 
         self.motion_prior = motion_prior
+        self.operator = get_operator(operator)
         self.spec = spec
         self.guidance_strength = guidance_strength
         self.guide_start = guide_start
@@ -119,20 +141,31 @@ class LatentDeltaGuidance:
         return callback_kwargs
 
     def apply(self, latents: torch.Tensor, strength: float) -> torch.Tensor:
-        """Nudge frame-to-frame deltas toward the motion prior.
+        """Nudge the operator's value toward the prior, PhaseLock's equation (2).
+
+        ``G = M_prior - T(z)``, written onto the frames after the anchor::
+
+            z[anchor:] <- z[anchor:] + lambda * G
+
+        For ``motion`` the anchor is 1, which is the paper verbatim: the first frame is
+        the image condition and is never modified. A higher-order operator consumes more
+        leading frames before producing its first value, so it anchors that many -- the
+        conditioning is preserved for every operator, not just the first-order one.
 
         Converts to canonical form first, so one implementation covers every layout.
         """
         canonical = to_canonical(latents, self.spec)
-        if canonical.shape[0] - 1 != self.motion_prior.shape[0]:
+        anchor = self.operator.anchor
+        expected = canonical.shape[0] - anchor
+        if expected != self.motion_prior.shape[0]:
             raise ValueError(
-                f"motion prior covers {self.motion_prior.shape[0]} transitions but the latents "
-                f"have {canonical.shape[0] - 1}"
+                f"{self.operator.name} prior covers {self.motion_prior.shape[0]} windows but "
+                f"the latents give {expected}"
             )
 
         prior = self.motion_prior.to(canonical.device, canonical.dtype)
-        current = canonical[1:] - canonical[:-1]
+        current = self.operator(canonical)
 
         guided = canonical.clone()
-        guided[1:] = canonical[1:] + strength * (prior - current)
+        guided[anchor:] = canonical[anchor:] + strength * (prior - current)
         return from_canonical(guided, self.spec).to(latents.dtype)
