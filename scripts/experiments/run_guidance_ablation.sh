@@ -6,7 +6,7 @@
 #   N=24 scripts/experiments/run_guidance_ablation.sh             # prune the grid
 #   N=0  scripts/experiments/run_guidance_ablation.sh             # all 198 take-1
 #
-# Every arm runs PhaseLock's equation (2) unchanged. Only the frame operator differs:
+# Every setting runs PhaseLock's equation (2) unchanged. Only the few-step prior differs:
 #
 #   motion   z[t+1] - z[t]                      PhaseLock as published
 #   accel    z[t+2] - 2z[t+1] + z[t]
@@ -15,7 +15,7 @@
 #
 # The prediction being tested: on the VAE latent -- PhaseLock's own space -- the detection
 # study measured phi_speed, the statistic of `motion`, at 46.6%, BELOW chance, while perr,
-# accel and jerk read 72.6/67.3/67.2. So `motion` is the weakest of the four, and an arm
+# accel and jerk read 72.6/67.3/67.2. So `motion` is the weakest of the four, and a run
 # guided on `perr` should beat it. See docs/RESULTS.md.
 #
 # One driver invocation per setting rather than one for all of them: they are hours apart
@@ -23,7 +23,7 @@
 # and rows are keyed by setting, and the driver skips clips already on disk, so re-running
 # resumes rather than repeats.
 #
-# ---- on STRENGTH, before comparing arms -------------------------------------------
+# ---- on STRENGTH, before comparing settings -------------------------------------------
 # lambda = 0.05 is the paper's, tuned for first differences. Higher-order priors are NOT
 # reliably the same size, and the direction depends on how grainy the 2-step pass is.
 # Measured on a synthetic latent, prior RMS relative to `motion`:
@@ -38,8 +38,8 @@
 # intervention for `jerk` on a smooth prior and a *stronger* one on a grainy prior, and it
 # cannot be corrected analytically -- it depends on the 2-step output.
 #
-# Every guided run therefore prints the measured prior RMS per arm. Read it on the first
-# small run. If the arms are within a small factor, one lambda is fair; if they are orders
+# Every guided run therefore prints its measured prior RMS. Read it on the first small
+# run. If the settings are within a small factor, one lambda is fair; if they are orders
 # apart, sweep STRENGTH per setting before believing any ranking.
 
 set -uo pipefail
