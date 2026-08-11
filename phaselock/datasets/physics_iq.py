@@ -33,7 +33,7 @@ import csv
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from .base import GenerationDataset, GenerationSample
 
@@ -95,6 +95,52 @@ class PhysicsIQ(GenerationDataset):
 
     def _optional(self, path: Path) -> Optional[str]:
         return str(path) if path.exists() else None
+
+    def select_benchmark(
+        self,
+        categories: Optional[Iterable[str]] = None,
+        perspectives: Optional[Iterable[str]] = None,
+        limit: Optional[int] = None,
+    ) -> list[GenerationSample]:
+        """The take-1 scenarios the benchmark scores, filtered and optionally capped.
+
+        Take-1 only -- 198 scenarios. Take-2 is the second recording of the same scenario,
+        the real-vs-real noise floor the benchmark normalises against, not extra prompts.
+
+        The cap is balanced across categories rather than first-N: Physics-IQ is 114 Solid
+        Mechanics against 6 Magnetism, so the first 8 samples are all one category and a
+        capped run would measure one kind of physics.
+
+        Lives here rather than in a driver so that the generator and the scorer cannot
+        drift into scoring different sample sets.
+        """
+        import collections
+
+        samples = self.select_generation(categories=categories)
+        if perspectives:
+            wanted = {p.lower() for p in perspectives}
+            unknown = wanted - {s.meta["perspective"] for s in samples}
+            if unknown:
+                raise ValueError(f"unknown perspectives: {sorted(unknown)}")
+            samples = [s for s in samples if s.meta["perspective"] in wanted]
+        if limit is None or limit >= len(samples):
+            return samples
+
+        grouped: dict[str, list[GenerationSample]] = collections.defaultdict(list)
+        for sample in samples:
+            grouped[sample.category].append(sample)
+        chosen: list[GenerationSample] = []
+        while len(chosen) < limit:
+            progressed = False
+            for category in sorted(grouped):
+                if grouped[category]:
+                    chosen.append(grouped[category].pop(0))
+                    progressed = True
+                    if len(chosen) == limit:
+                        break
+            if not progressed:  # pragma: no cover - guarded above
+                break
+        return chosen
 
     def generation_samples(self) -> list[GenerationSample]:
         if self._samples is not None:

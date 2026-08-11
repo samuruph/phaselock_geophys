@@ -12,7 +12,7 @@ backend:
 
 data:
   name: physics_iq
-  limit: 8            # 2 arms x ~5.5 min per clip; raise once the loop is trusted
+  limit: null         # all 198 take-1 scenarios; override for a smoke test
   seed: 0
 
 generation:
