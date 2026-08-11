@@ -87,6 +87,31 @@ def candidates(z: np.ndarray) -> dict[str, float]:
         "mean |dE|": float(absolute.mean()),
     })
 
+    # -- how to summarise a derivative series --------------------------------
+    # GeoPhys summarises speeds with a standard deviation and accelerations with a mean of
+    # squared norms, and never says why the two differ. `phi_jerk` inherited the second
+    # convention. These ask what the first would have given, on both derivatives, with the
+    # scale-normalised form alongside so a win can be told from the magnitude effect.
+    a = z[2:] - 2 * z[1:-1] + z[:-2]
+    na = np.linalg.norm(a, axis=-1)
+    if len(a) > 1:
+        j = a[1:] - a[:-1]
+        nj = np.linalg.norm(j, axis=-1)
+        out.update({
+            "jerk: mean(|j|^2)  [current]": float((nj**2).mean()),
+            "jerk: mean(|j|)": float(nj.mean()),
+            "jerk: std(|j|)": float(nj.std()),
+            "jerk: std(|j|^2)": float((nj**2).std()),
+            "jerk: std(|j|)/mean(|j|)": float(nj.std() / (nj.mean() + EPS)),
+            "jerk: std(|j|)/scale": float(nj.std() / scale),
+        })
+    out.update({
+        "accel: mean(|a|^2)  [current]": float((na**2).mean()),
+        "accel: mean(|a|)": float(na.mean()),
+        "accel: std(|a|)": float(na.std()),
+        "accel: std(|a|)/mean(|a|)": float(na.std() / (na.mean() + EPS)),
+    })
+
     # -- energy continuity ---------------------------------------------------
     # Real motion changes its energy smoothly; a teleport, a penetration or an inserted
     # impulse breaks that at one instant. A spread over the whole clip cannot see it --

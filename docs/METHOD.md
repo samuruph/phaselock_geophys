@@ -42,7 +42,7 @@ video ──decode──▶ temporal window ──▶ uniform resample ──▶
                             ▼                                               ▼
                     per-latent-frame pooling                        DINOv2 (external)
                             │                                               │
-                            └──────────────▶ five statistics ◀──────────────┘
+                            └───────────────▶ the statistics ◀──────────────┘
                                                     │
                                         pairwise accuracy + AUC + CI
 ```
@@ -427,7 +427,7 @@ reduce to that shape before any statistic is touched:
   latent are averaged, giving `(T, D)`. Without this the two paths differ in both
   trajectory length and spacing, and every statistic depends on both.
 
-### The five statistics, step by step
+### GeoPhys's five statistics, step by step
 
 **Per-frame intermediates first.** With `v_t = z̄_{t+1} − z̄_t` for `t = 1 … T−1`:
 
@@ -490,7 +490,7 @@ trajectory — that is the whole reason this works.
 **Geometric drift, exact** — [`geometric_drift`](../phaselock/metrics/flow_geometry.py#L61)
 
 1. detach `Z`, clone it, set `requires_grad_(True)`
-2. compute all five statistics on it, building an autograd graph over a `(T, D)` tensor
+2. compute every statistic on it, building an autograd graph over a `(T, D)` tensor
 3. for each statistic: `g = autograd.grad(φ_σ, Z, retain_graph=True)`
 4. `ġ_σ = Σ (g ⊙ U)` — the directional derivative of the statistic along the flow
 
@@ -531,7 +531,7 @@ per source. Then, per signal, over matched pairs:
    [`pairwise_accuracy`](../phaselock/metrics/scoring.py#L96)
 4. interval = 1000-resample bootstrap **grouped by scenario** —
    [`bootstrap_ci`](../phaselock/metrics/scoring.py#L133)
-5. ensembles over the five: [`majority_ensemble`](../phaselock/metrics/scoring.py#L300)
+5. ensembles over the statistics: [`majority_ensemble`](../phaselock/metrics/scoring.py#L300)
    (`Σ z_b`) and [`or_ensemble`](../phaselock/metrics/scoring.py#L311) (`argmax |z_b|`)
 6. and, once for the whole run,
    [`selection_null`](../phaselock/metrics/scoring.py#L246) — shuffle which member of each
@@ -549,7 +549,7 @@ python -m pytest tests/test_geophys.py tests/test_flow_geometry.py -v
 ```
 
 The statistics are pinned against analytic ground truth rather than golden values — a
-straight line gives zero for all five, a discretised circle gives constant curvature with
+straight line gives zero for every one, a discretised circle gives constant curvature with
 zero speed variation, an injected teleport spikes acceleration and residual at exactly the
 frame it was injected at. Two tests exist specifically to document traps: that the naive
 global OLS residual is degenerate, and that the turning angle stays stable at both
@@ -592,7 +592,7 @@ interval.
 
 ## 6. Reading the results
 
-**Check the correctness gate first.** `scripts/run_external.py` runs the five statistics
+**Check the correctness gate first.** `scripts/run_external.py` runs the same statistics
 on frozen DINOv2 features — the representation GeoPhys designed them for. It must land
 near the published 77.6–80.8% single-backbone range on LikePhys. If it does not, the
 statistics, the pairing, the preprocessing or the scoring rule is wrong, and no internal
