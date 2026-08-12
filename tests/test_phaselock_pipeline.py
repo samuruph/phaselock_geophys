@@ -129,3 +129,21 @@ def test_returning_the_few_step_result_gives_both_videos():
     final, few = pipeline(prompt="x", image=Image.new("RGB", (WIDTH, HEIGHT)),
                           return_few_result=True)
     assert len(final) == len(few) == VIDEO_FRAMES
+
+
+def test_the_pipeline_keeps_the_source_it_was_constructed_with():
+    """The driver sets `source` once at construction and `few_step_prior_type` per setting.
+
+    That asymmetry hid a bug for three runs: `source=` was never actually passed, so the
+    pipeline used its default and every x0_hat and velocity setting silently generated the
+    latent result -- byte-identical videos under three different names. Nothing raised,
+    and the CSV faithfully recorded `latent` for all of them.
+    """
+    for source in ("latent", "x0_hat", "velocity"):
+        pipeline = PhaseLockPipeline(_FakeBackend(), source=source)
+        assert pipeline.source == source
+
+    # ... and the type is what varies per setting, without disturbing the source.
+    pipeline = PhaseLockPipeline(_FakeBackend(), source="velocity")
+    pipeline.few_step_prior_type = "jerk"
+    assert (pipeline.source, pipeline.few_step_prior_type) == ("velocity", "jerk")

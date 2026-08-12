@@ -136,11 +136,79 @@ def load_video(
     Order matters: window and resample before blurring, so that ``blur_sigma`` means the
     same thing in output pixels regardless of the source resolution.
     """
-    frames = decode_video(path)
-    frames = temporal_window(frames, window)
-    frames = resample_frames(frames, num_frames)
-    frames = letterbox(frames, height, width)
+    frames = _decode_selected(path, num_frames, window, height, width)
     return gaussian_blur(frames, blur_sigma)
+
+
+def _selected_indices(count: int, num_frames: int, window: Optional[float]) -> list[int]:
+    """Which source frames survive the window and the resample, in order.
+
+    Exactly the indices ``temporal_window`` then ``resample_frames`` would have kept, so
+    decoding only these is equivalent to decoding everything and throwing most of it away.
+    """
+    start, keep = 0, count
+    if window is not None and window < 1.0:
+        if not 0.0 < window:
+            raise ValueError(f"window must be in (0, 1] or None, got {window}")
+        keep = max(2, int(round(count * window)))
+        start = (count - keep) // 2
+    if keep == num_frames:
+        return list(range(start, start + keep))
+    picks = torch.linspace(0, keep - 1, num_frames).round().long().clamp(0, keep - 1)
+    return [start + int(i) for i in picks]
+
+
+def _decode_selected(
+    path: str, num_frames: int, window: Optional[float], height: int, width: int
+) -> torch.Tensor:
+    """Decode only the frames that survive, letterboxing each as it arrives.
+
+    Decoding the whole clip and then discarding most of it is what the obvious
+    implementation does, and it is untenable here: Physics-IQ ships 4K, so a 150-frame
+    clip is 3.7 GB as uint8 and 15 GB once converted to float -- the conversion holds both
+    at once, and the process is killed. Only 40 of those frames are ever used.
+
+    ``letterbox`` is applied per frame rather than to the stack. ``F.interpolate`` is
+    per-image, so this is numerically identical to letterboxing the whole tensor, and it
+    means only one source-resolution frame is ever resident.
+    """
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise FileNotFoundError(f"could not open video: {path}")
+    try:
+        count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        if count <= 0:  # some containers do not report it; fall back to reading through
+            capture.release()
+            frames = decode_video(path)
+            frames = temporal_window(frames, window)
+            frames = resample_frames(frames, num_frames)
+            return letterbox(frames, height, width)
+
+        wanted = _selected_indices(count, num_frames, window)
+        needed = sorted(set(wanted))
+        decoded: dict[int, torch.Tensor] = {}
+        index = 0
+        for target in needed:
+            # Sequential reads rather than seeking: seeking on a long-GOP encode lands on
+            # the nearest keyframe, which would silently return a different frame.
+            while index <= target:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                if index == target:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    one = torch.from_numpy(
+                        rgb.astype(np.float32) / 255.0
+                    ).permute(2, 0, 1).unsqueeze(0)
+                    decoded[target] = letterbox(one, height, width)[0]
+                index += 1
+    finally:
+        capture.release()
+
+    if not decoded:
+        raise ValueError(f"decoded zero frames from {path}")
+    last = max(decoded)
+    return torch.stack([decoded.get(i, decoded[last]) for i in wanted]).contiguous()
 
 
 def save_video(frames: torch.Tensor, path: str, fps: int = 8) -> None:

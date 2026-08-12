@@ -232,6 +232,7 @@ def main() -> None:
             f"backend only generates {num_frames}"
         )
 
+    source = args.source or config.phaselock.few_step_prior_source
     pipeline = PhaseLockPipeline(
         backend,
         few_steps=config.phaselock.few_steps,
@@ -239,7 +240,11 @@ def main() -> None:
         guidance_strength=config.phaselock.guidance_strength,
         guide_start=config.phaselock.guide_start,
         guide_end=config.phaselock.guide_end,
+        source=source,
     )
+    if pipeline.source != source:
+        raise SystemExit(f"asked for source {source!r} but the pipeline has "
+                         f"{pipeline.source!r}")
 
     logger.info(
         "%d of %d take-1 scenarios x [%s] on %s, generating %d frames at %d fps, "
@@ -248,7 +253,6 @@ def main() -> None:
         config.backend.name, num_frames, spec.default_fps, score_frames,
         BENCHMARK_SECONDS,
     )
-    source = args.source or config.phaselock.few_step_prior_source
     settings = {name: setting_name(name, source) for name in guidances}
     for folder in settings.values():
         (output / "videos" / folder).mkdir(parents=True, exist_ok=True)
