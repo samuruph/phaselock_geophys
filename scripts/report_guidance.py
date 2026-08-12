@@ -39,7 +39,8 @@ BASELINE = "baseline"
 
 # (column, label, higher_is_better). `motion` is a control, never a score.
 METRICS = [
-    ("raw_score", "PhysicsIQ score", True),
+    ("physics_iq_score", "PhysicsIQ score %", True),
+    ("raw_score", "raw (un-normalised)", True),
     ("spatial_iou", "spatial IoU", True),
     ("spatiotemporal_iou", "spatiotemporal IoU", True),
     ("weighted_spatial_iou", "weighted IoU", True),
@@ -112,7 +113,7 @@ def main() -> None:
     # compared is the point of the table.
     guided = sorted(
         (s for s in by_setting if s != BASELINE),
-        key=lambda s: -stats_module.mean(r["raw_score"] for r in by_setting[s]),
+        key=lambda s: -stats_module.mean(r["physics_iq_score"] for r in by_setting[s]),
     )
     order = ([BASELINE] if BASELINE in by_setting else []) + guided
 
@@ -137,13 +138,13 @@ def main() -> None:
     reference_motion = stats_module.mean(r["reference_motion"] for r in rows)
     for setting in order:
         group = by_setting[setting]
-        score = stats_module.mean(r["raw_score"] for r in group)
+        score = stats_module.mean(r["physics_iq_score"] for r in group)
         motion = stats_module.mean(r["motion"] for r in group)
 
         delta = ""
         if control and setting != BASELINE:
-            paired = [r["raw_score"] - control["raw_score"][r["sample_id"]]
-                      for r in group if r["sample_id"] in control["raw_score"]]
+            paired = [r["physics_iq_score"] - control["physics_iq_score"][r["sample_id"]]
+                      for r in group if r["sample_id"] in control["physics_iq_score"]]
             if paired:
                 delta = f"{stats_module.mean(paired):+.4f}"
 

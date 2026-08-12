@@ -4,6 +4,7 @@
 #   scripts/experiments/run_guidance_ablation.sh                  # the staged default
 #   N=4  GUIDANCE="baseline motion" scripts/experiments/run_guidance_ablation.sh   # smoke
 #   N=24 scripts/experiments/run_guidance_ablation.sh             # prune the grid
+#   CATEGORIES="Solid Mechanics,Fluid Dynamics" N=20 scripts/experiments/run_guidance_ablation.sh
 #   SOURCES="latent x0_hat velocity" scripts/experiments/run_guidance_ablation.sh
 #   N=0  scripts/experiments/run_guidance_ablation.sh             # all 198 take-1
 #
@@ -50,6 +51,11 @@ export PYTHONPATH="${PYTHONPATH:-}:$PWD"
 N="${N:-24}"                                  # 0 means all 198 take-1 scenarios
 GUIDANCE="${GUIDANCE:-baseline motion accel jerk perr}"
 SOURCES="${SOURCES:-latent}"           # latent | x0_hat | velocity
+# Physics-IQ categories, comma separated. Solid Mechanics is 114 of the 198 scenarios and
+# Magnetism only 6, so restricting to where something visibly happens is often what you
+# want. Blank = all five.
+#   "Solid Mechanics"  "Fluid Dynamics"  "Optics"  "Thermodynamics"  "Magnetism"
+CATEGORIES="${CATEGORIES:-}"
 STRENGTH="${STRENGTH:-}"                      # blank keeps the paper's 0.05
 ROOT="${ROOT:-/data/experiments/phaselock_prior_ablation}"
 CONFIG="${CONFIG:-configs/experiments/physics_iq.yaml}"
@@ -63,6 +69,7 @@ exec > >(tee -a "$LOG") 2>&1
 echo "logging to $LOG"
 
 LIMIT=""; [ "$N" != 0 ] && LIMIT="--limit $N"
+CATS=""; [ -n "$CATEGORIES" ] && CATS="--categories"
 # output__root as well as the run id: without it the driver writes under
 # OutputConfig's default and ROOT only ever names the log directory, which is
 # how an empty folder gets created next to the real results.
@@ -71,7 +78,7 @@ OVERRIDE="output__root=$ROOT output__run_id=$RUN_ID"
 
 echo "few-step prior types: $GUIDANCE"
 echo "sources: $SOURCES"
-echo "clips: ${N:-all}   strength: ${STRENGTH:-0.05 (paper)}"
+echo "clips: ${N:-all}   categories: ${CATEGORIES:-all five}   strength: ${STRENGTH:-0.05 (paper)}"
 echo "output: $ROOT/$RUN_ID"
 
 step () {
@@ -90,13 +97,14 @@ step () {
 for setting in $GUIDANCE; do
   if [ "$setting" = baseline ]; then
     step "baseline (unguided)" \
-      python scripts/run_physics_iq.py --config "$CONFIG" --guidance baseline $LIMIT $OVERRIDE
+      python scripts/run_physics_iq.py --config "$CONFIG" --guidance baseline \
+        $CATS ${CATEGORIES:+"$CATEGORIES"} $LIMIT $OVERRIDE
     continue
   fi
   for source in $SOURCES; do
     step "$setting on $source" \
       python scripts/run_physics_iq.py --config "$CONFIG" --guidance "$setting" \
-        --source "$source" $LIMIT $OVERRIDE
+        --source "$source" $CATS ${CATEGORIES:+"$CATEGORIES"} $LIMIT $OVERRIDE
   done
 done
 

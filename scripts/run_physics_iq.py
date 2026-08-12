@@ -75,7 +75,7 @@ from phaselock.datasets.physics_iq import PhysicsIQ
 from phaselock.datasets.video_io import load_video
 from phaselock.experiments.detection import frame_geometry
 from phaselock.experiments.generation import frames_to_tensor
-from phaselock.metrics.motion_mask import motion_mask_scores
+from phaselock.metrics.motion_mask import motion_mask_scores, physics_iq_score
 from phaselock.guidance import SOURCES
 from phaselock.operators import OPERATORS
 from phaselock.pipelines.phaselock import PhaseLockPipeline
@@ -131,7 +131,8 @@ def parse_args() -> argparse.Namespace:
                         help="which tensor the prior is measured on; default from the "
                              "config. latent is PhaseLock's own")
     parser.add_argument("--categories", type=_list,
-                        help="names from the CSV's category column; default is all five")
+                        help="comma-separated, from: Solid Mechanics, Fluid Dynamics, "
+                             "Optics, Thermodynamics, Magnetism. Default is all five")
     parser.add_argument("--perspectives", type=_list, help="left,center,right; default all")
     parser.add_argument("--limit", type=int,
                         help="cap the sample count, balanced across categories")
@@ -258,6 +259,16 @@ def main() -> None:
         # so this is an identity resample rather than a stretch.
         reference = load_video(sample.reference_path, num_frames=score_frames,
                                height=height, width=width)
+        # The benchmark's own upper bound: a SECOND real recording of the same scene,
+        # scored against the first. Reality repeating itself does not score 100% on a
+        # motion mask -- lighting flickers, the camera is not bit-identical -- so the raw
+        # score is only interpretable divided by this. It depends on the real footage
+        # alone, so it is computed once per clip and reused by every setting.
+        ceiling = None
+        if sample.meta.get("pair_path"):
+            take_two = load_video(sample.meta["pair_path"], num_frames=score_frames,
+                                  height=height, width=width)
+            ceiling = motion_mask_scores(take_two, reference)
         image = load_image(sample.image_path)
         video_name = sample.meta["output_name"]
 
@@ -314,6 +325,11 @@ def main() -> None:
                 "weighted_spatial_iou": scores.weighted_spatial_iou,
                 "mse": scores.mse,
                 "raw_score": scores.raw_score,
+                # THE number: the raw score as a percentage of the real-vs-real ceiling,
+                # which is what the benchmark reports and what is comparable across scenes.
+                "physics_iq_score": physics_iq_score(scores, ceiling),
+                "ceiling_raw_score": (ceiling.raw_score if ceiling is not None
+                                      else float("nan")),
                 "motion": motion_magnitude(generated),
                 "reference_motion": motion_magnitude(reference),
             })
