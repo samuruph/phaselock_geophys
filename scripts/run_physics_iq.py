@@ -75,7 +75,8 @@ from phaselock.datasets.physics_iq import PhysicsIQ
 from phaselock.datasets.video_io import load_video
 from phaselock.experiments.detection import frame_geometry
 from phaselock.experiments.generation import frames_to_tensor
-from phaselock.metrics.motion_mask import motion_mask_scores, physics_iq_score
+from phaselock.metrics.motion_mask import (MotionMaskScores, motion_mask_scores,
+                                           physics_iq_score)
 from phaselock.guidance import SOURCES
 from phaselock.operators import OPERATORS
 from phaselock.pipelines.phaselock import PhaseLockPipeline
@@ -100,6 +101,11 @@ GUIDANCE_ALIASES = {"phaselock": "motion"}
 
 def resolve_guidance(name: str) -> str:
     return GUIDANCE_ALIASES.get(name, name)
+
+
+def _variance_of(variance, field: str) -> float:
+    """One physical-variance metric, or NaN for a scenario with no second real take."""
+    return float("nan") if variance is None else getattr(variance, field)
 
 
 def setting_name(prior_type: str, source: str) -> str:
@@ -263,16 +269,20 @@ def main() -> None:
         # so this is an identity resample rather than a stretch.
         reference = load_video(sample.reference_path, num_frames=score_frames,
                                height=height, width=width)
-        # The benchmark's own upper bound: a SECOND real recording of the same scene,
-        # scored against the first. Reality repeating itself does not score 100% on a
-        # motion mask -- lighting flickers, the camera is not bit-identical -- so the raw
-        # score is only interpretable divided by this. It depends on the real footage
-        # alone, so it is computed once per clip and reused by every setting.
-        ceiling = None
+        # The benchmark's PHYSICAL VARIANCE: a SECOND real recording of the same scene,
+        # scored against the first. Reality repeating itself does not score 1.0 on a motion
+        # mask -- lighting flickers, the camera is not bit-identical -- so each metric is
+        # only interpretable against this. It depends on the real footage alone, so it is
+        # computed once per clip and reused by every setting.
+        #
+        # Stored per row rather than folded into a per-clip score, because the benchmark
+        # pools numerators and denominators over the whole set before dividing. See
+        # phaselock.metrics.motion_mask.physics_iq_score.
+        variance = None
         if sample.meta.get("pair_path"):
             take_two = load_video(sample.meta["pair_path"], num_frames=score_frames,
                                   height=height, width=width)
-            ceiling = motion_mask_scores(take_two, reference)
+            variance = motion_mask_scores(take_two, reference)
         image = load_image(sample.image_path)
         video_name = sample.meta["output_name"]
 
@@ -329,11 +339,14 @@ def main() -> None:
                 "weighted_spatial_iou": scores.weighted_spatial_iou,
                 "mse": scores.mse,
                 "raw_score": scores.raw_score,
-                # THE number: the raw score as a percentage of the real-vs-real ceiling,
-                # which is what the benchmark reports and what is comparable across scenes.
-                "physics_iq_score": physics_iq_score(scores, ceiling),
-                "ceiling_raw_score": (ceiling.raw_score if ceiling is not None
-                                      else float("nan")),
+                # The real-vs-real value of each metric on this scene. The reportable
+                # Physics-IQ score is built from these across all clips, not per clip.
+                "variance_spatial_iou": _variance_of(variance, "spatial_iou"),
+                "variance_spatiotemporal_iou": _variance_of(variance,
+                                                            "spatiotemporal_iou"),
+                "variance_weighted_spatial_iou": _variance_of(variance,
+                                                              "weighted_spatial_iou"),
+                "variance_mse": _variance_of(variance, "mse"),
                 "motion": motion_magnitude(generated),
                 "reference_motion": motion_magnitude(reference),
             })
@@ -364,6 +377,31 @@ def main() -> None:
     )
 
 
+VARIANCE_FIELDS = {
+    "spatial_iou": "variance_spatial_iou",
+    "spatiotemporal_iou": "variance_spatiotemporal_iou",
+    "weighted_spatial_iou": "variance_weighted_spatial_iou",
+    "mse": "variance_mse",
+}
+
+
+def score_of(rows: list[dict]) -> float:
+    """The Physics-IQ score for a set of rows, pooled the way the benchmark pools it.
+
+    Rows whose scenario has no second real take carry NaN variances and are dropped: they
+    have no reference to normalise against, and one NaN would poison the pooled mean.
+    """
+    usable = [r for r in rows
+              if all(r[v] == r[v] for v in VARIANCE_FIELDS.values())]
+    if not usable:
+        return float("nan")
+    scores = [MotionMaskScores(**{k: float(r[k]) for k in VARIANCE_FIELDS})
+              for r in usable]
+    variances = [MotionMaskScores(**{k: float(r[v]) for k, v in VARIANCE_FIELDS.items()})
+                 for r in usable]
+    return physics_iq_score(scores, variances)
+
+
 def report(rows: list[dict], guidances: list[str]) -> None:
     """Per-guidance means, then each one's paired delta against the unguided baseline.
 
@@ -378,6 +416,12 @@ def report(rows: list[dict], guidances: list[str]) -> None:
                ("weighted_spatial_iou", True), ("mse", False), ("motion", None)]
 
     print(f"\n{len(by_guidance[guidances[0]])} clips\n")
+    # THE number, and the only one that is comparable to a published Physics-IQ result.
+    # It is a property of the whole set of clips, not of any one of them, so it is printed
+    # as a single row here rather than averaged out of a column.
+    print(f"{'PHYSICS-IQ SCORE %':<24}"
+          + "".join(f"{score_of(by_guidance[g]):>14.2f}" for g in guidances))
+    print()
     print(f"{'metric':<24}" + "".join(f"{a:>14}" for a in guidances))
     print("-" * (24 + 14 * len(guidances)))
     for metric, higher_is_better in metrics:

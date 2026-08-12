@@ -13,10 +13,12 @@ summarised four ways:
   pendulum) from one-pass motion (a rolling ball).
 * **MSE** -- *how*. Plain pixel error against the real continuation. Lower is better.
 
-They combine into a single score as ``sum(IoU) - MSE``, normalised so that a second real
-take of the same scene scores 100%. That normalisation is what makes the number
-interpretable: it is an empirical ceiling set by the scene's own physical variance, not
-an arbitrary scale.
+:func:`physics_iq_score` combines them exactly as the official evaluator does: each IoU is
+divided by its **physical variance** -- the same metric between two real takes of the scene
+-- and MSE is subtracted after the same correction. The normalisation is what makes the
+number interpretable: it is an empirical ceiling set by the scene's own repeatability, not
+an arbitrary scale. It is computed by pooling over the whole evaluation set before
+dividing, so it is a property of a *run*, not of a clip.
 
 Used here for LikePhys continuations, which are rendered with a static camera and so
 satisfy the protocol's assumptions directly, and later for Physics-IQ itself.
@@ -26,7 +28,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 import torch
 
@@ -112,7 +114,12 @@ class MotionMaskScores:
 
     @property
     def raw_score(self) -> float:
-        """``sum(IoU) - MSE``, before normalisation against the real-vs-real ceiling."""
+        """``sum(IoU) - MSE``: a per-clip diagnostic, **not** the benchmark's score.
+
+        Un-normalised, so it is not comparable across scenes, and it weights the three
+        IoUs equally with no physical-variance correction. Use :func:`physics_iq_score`
+        for the reportable number.
+        """
         return (
             self.spatial_iou
             + self.spatiotemporal_iou
@@ -144,27 +151,56 @@ def motion_mask_scores(
     )
 
 
+def _mean(values: Sequence[float]) -> float:
+    return float(sum(values) / len(values))
+
+
 def physics_iq_score(
-    scores: MotionMaskScores, ceiling: Optional[MotionMaskScores] = None
+    scores: Sequence[MotionMaskScores], variances: Sequence[MotionMaskScores]
 ) -> float:
-    """Normalise the combined score so the real-vs-real ceiling reads 100%.
+    """The benchmark's own score, matching ``physiq/calculate_iq_score.py``.
+
+    Each IoU is divided by its **physical variance** -- the same metric computed between two
+    real takes of the same scene -- and the three ratios are averaged. MSE is *subtracted*
+    after the same bias correction, because it is an error rather than an agreement::
+
+        score = mean(ST_IoU/var_ST, spatial/var_spatial, weighted/var_weighted)
+                - (MSE - var_MSE)
+        score = clip(100 * score, 0, 100)
+
+    **This is a dataset-level quantity and cannot be computed per clip and averaged.** Every
+    term above is a mean over the whole evaluation set *before* any division, which is what
+    makes it stable: a single scene where nothing moves has a physical variance near zero,
+    and per-clip ratios would divide by it and produce thousands of percent. Pooling first
+    puts that scene's small numerator and small denominator into the same two sums, where it
+    carries its own weight and nothing else's.
 
     Args:
-        ceiling: Scores of a second real take of the same scene against the first. This
-            is the benchmark's empirical upper bound -- the level at which a generation
-            is indistinguishable, in motion-mask terms, from reality repeating itself.
-            Without it the raw score is returned as a percentage, which is not comparable
-            across scenes.
+        scores: One entry per generated clip.
+        variances: The matching real-vs-real (take 2 against take 1) scores, in the same
+            order. These are the empirical ceiling: the level at which a generation is
+            indistinguishable, in motion-mask terms, from reality repeating itself.
 
     Returns:
-        Percentage. 0 means no overlap with reality; 100 means it matched the noise floor.
+        Percentage in [0, 100], clipped exactly as the official evaluator clips it.
     """
-    if ceiling is None:
-        return 100.0 * scores.raw_score
-    denominator = ceiling.raw_score
-    if abs(denominator) < _EPS:
+    if len(scores) != len(variances):
         raise ValueError(
-            "the real-vs-real ceiling scored ~0, so it cannot normalise anything; "
-            "check that the take-2 clip is aligned with take 1"
+            f"got {len(scores)} scores but {len(variances)} physical variances; "
+            "every clip needs its own real-vs-real reference"
         )
-    return 100.0 * scores.raw_score / denominator
+    if not scores:
+        raise ValueError("no clips to score")
+
+    ratios = []
+    for field in ("spatiotemporal_iou", "spatial_iou", "weighted_spatial_iou"):
+        denominator = _mean([getattr(v, field) for v in variances])
+        if abs(denominator) < _EPS:
+            raise ValueError(
+                f"the real-vs-real {field} pooled to ~0 across {len(scores)} clips, so it "
+                "cannot normalise anything; check that the take-2 clips are aligned"
+            )
+        ratios.append(_mean([getattr(s, field) for s in scores]) / denominator)
+
+    error = _mean([s.mse for s in scores]) - _mean([v.mse for v in variances])
+    return float(min(max(100.0 * (sum(ratios) / 3.0 - error), 0.0), 100.0))

@@ -7,6 +7,7 @@ answer is known by hand.
 
 from __future__ import annotations
 
+import statistics
 import math
 
 import pytest
@@ -186,24 +187,74 @@ def test_scores_reject_mismatched_shapes():
 # -- Physics-IQ normalisation ----------------------------------------------
 
 
-def test_normalising_against_the_real_ceiling_puts_a_second_take_at_100_percent():
-    """The benchmark's definition: 100% means indistinguishable from reality repeating."""
-    ceiling = MotionMaskScores(0.30, 0.24, 0.16, 0.01)
-    assert physics_iq_score(ceiling, ceiling) == pytest.approx(100.0)
+def test_matching_the_physical_variance_exactly_scores_100_percent():
+    """The benchmark's definition: 100% means indistinguishable from reality repeating.
+
+    Each IoU divided by its own variance is then 1.0, averaging to 1.0, and the MSE
+    correction cancels -- so the score is exactly 100 before the clip.
+    """
+    variance = MotionMaskScores(0.30, 0.24, 0.16, 0.01)
+    assert physics_iq_score([variance], [variance]) == pytest.approx(100.0)
 
     worse = MotionMaskScores(0.15, 0.12, 0.08, 0.02)
-    assert 0.0 < physics_iq_score(worse, ceiling) < 100.0
+    assert 0.0 < physics_iq_score([worse], [variance]) < 100.0
 
 
-def test_score_without_a_ceiling_is_the_raw_combination():
-    scores = MotionMaskScores(0.30, 0.24, 0.16, 0.01)
-    assert physics_iq_score(scores) == pytest.approx(100.0 * (0.30 + 0.24 + 0.16 - 0.01))
+def test_the_score_matches_the_official_formula():
+    """Spelled out against ``physiq/calculate_iq_score.py``: IoUs divide, MSE subtracts."""
+    scores = [MotionMaskScores(0.20, 0.10, 0.08, 0.03),
+              MotionMaskScores(0.40, 0.30, 0.24, 0.05)]
+    variances = [MotionMaskScores(0.50, 0.40, 0.30, 0.01),
+                 MotionMaskScores(0.30, 0.20, 0.10, 0.03)]
+    expected = 100.0 * (
+        ((0.10 + 0.30) / (0.40 + 0.20)      # spatiotemporal, pooled then divided
+         + (0.20 + 0.40) / (0.50 + 0.30)    # spatial
+         + (0.08 + 0.24) / (0.30 + 0.10))   # weighted spatial
+        / 3.0
+        - ((0.03 + 0.05) / 2 - (0.01 + 0.03) / 2)
+    )
+    assert physics_iq_score(scores, variances) == pytest.approx(expected)
 
 
-def test_a_degenerate_ceiling_raises_rather_than_dividing_by_zero():
-    ceiling = MotionMaskScores(0.0, 0.0, 0.0, 0.0)
-    with pytest.raises(ValueError, match="ceiling scored"):
-        physics_iq_score(MotionMaskScores(0.1, 0.1, 0.1, 0.0), ceiling)
+def test_pooling_beats_averaging_per_clip_ratios_when_one_scene_barely_moves():
+    """The bug this signature exists to prevent.
+
+    A scene whose two real takes barely overlap has a physical variance near zero. Its
+    per-clip ratio explodes and swamps the mean; pooled, its tiny numerator and tiny
+    denominator carry only their own weight.
+    """
+    normal = (MotionMaskScores(0.20, 0.16, 0.10, 0.02),
+              MotionMaskScores(0.40, 0.32, 0.20, 0.01))
+    degenerate = (MotionMaskScores(0.003, 0.002, 0.001, 0.02),
+                  MotionMaskScores(0.0002, 0.0002, 0.0001, 0.01))
+
+    scores = [normal[0], degenerate[0]]
+    variances = [normal[1], degenerate[1]]
+
+    each = [physics_iq_score([s], [v]) for s, v in zip(scores, variances)]
+    per_clip = statistics.mean(each)
+    pooled = physics_iq_score(scores, variances)
+
+    # Scored alone the degenerate clip reads 1166% and is only saved by the clip to 100,
+    # which then drags the average of the two up by 25 points.
+    assert each[1] == pytest.approx(100.0)
+    assert per_clip == pytest.approx(74.5)
+
+    # Pooled, it moves the answer by less than a point off the honest clip's own 49.
+    assert pooled == pytest.approx(49.6, abs=0.1)
+
+
+def test_a_degenerate_pooled_variance_raises_rather_than_dividing_by_zero():
+    variance = MotionMaskScores(0.0, 0.0, 0.0, 0.0)
+    with pytest.raises(ValueError, match="pooled to ~0"):
+        physics_iq_score([MotionMaskScores(0.1, 0.1, 0.1, 0.0)], [variance])
+
+
+def test_mismatched_lengths_are_refused():
+    scores = [MotionMaskScores(0.2, 0.2, 0.2, 0.0)] * 3
+    variances = [MotionMaskScores(0.4, 0.4, 0.4, 0.0)] * 2
+    with pytest.raises(ValueError, match="every clip needs its own"):
+        physics_iq_score(scores, variances)
 
 
 def test_psnr_endpoints_and_ordering():

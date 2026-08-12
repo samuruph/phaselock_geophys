@@ -6,8 +6,13 @@
 
 Each setting is a `(few_step_prior_type, few_step_prior_source)` pair plus the unguided
 baseline, and every one generated the same clips from the same seed. So the number that
-matters is the **paired delta against baseline**, not the absolute score: per-clip
-differences remove the clip-to-clip variance that otherwise swamps a few points.
+matters is the **delta against baseline**, not the absolute score, which moves with the
+clip draw.
+
+The Physics-IQ score itself is pooled across clips before dividing by the physical
+variance -- see :func:`phaselock.metrics.motion_mask.physics_iq_score` -- so it has no
+per-clip value. Its delta is a difference of two pooled scores over the same clips. The
+component metrics below it *are* per-clip, and those are paired.
 
 Two things are printed alongside every score, and both can retire a result:
 
@@ -35,17 +40,39 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from phaselock.metrics.motion_mask import MotionMaskScores, physics_iq_score
+
 BASELINE = "baseline"
 
 # (column, label, higher_is_better). `motion` is a control, never a score.
+# The Physics-IQ score itself is NOT here: it is pooled over clips before dividing, so it
+# has no per-clip value to average or to pair. It is reported once per setting instead.
 METRICS = [
-    ("physics_iq_score", "PhysicsIQ score %", True),
     ("raw_score", "raw (un-normalised)", True),
     ("spatial_iou", "spatial IoU", True),
     ("spatiotemporal_iou", "spatiotemporal IoU", True),
     ("weighted_spatial_iou", "weighted IoU", True),
     ("mse", "MSE", False),
 ]
+
+VARIANCE_FIELDS = {
+    "spatial_iou": "variance_spatial_iou",
+    "spatiotemporal_iou": "variance_spatiotemporal_iou",
+    "weighted_spatial_iou": "variance_weighted_spatial_iou",
+    "mse": "variance_mse",
+}
+
+
+def score_of(rows: list[dict]) -> float:
+    """The pooled Physics-IQ score, or NaN if the physical variances are not recorded."""
+    usable = [r for r in rows if all(isinstance(r.get(v), float) and r[v] == r[v]
+                                     for v in VARIANCE_FIELDS.values())]
+    if not usable:
+        return float("nan")
+    return physics_iq_score(
+        [MotionMaskScores(**{k: r[k] for k in VARIANCE_FIELDS}) for r in usable],
+        [MotionMaskScores(**{k: r[v] for k, v in VARIANCE_FIELDS.items()}) for r in usable],
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,7 +104,8 @@ def load_rows(run_dir: Path) -> list[dict]:
         with open(path, newline="") as handle:
             for row in csv.DictReader(handle):
                 for key in ("spatial_iou", "spatiotemporal_iou", "weighted_spatial_iou",
-                            "mse", "raw_score", "motion", "reference_motion", "prior_rms"):
+                            "mse", "raw_score", "motion", "reference_motion", "prior_rms",
+                            *VARIANCE_FIELDS.values()):
                     if row.get(key) not in (None, ""):
                         row[key] = float(row[key])
                 row["setting"] = setting_of(row)
@@ -111,10 +139,8 @@ def main() -> None:
 
     # Baseline first, then the guided settings by score. Sorting by the thing being
     # compared is the point of the table.
-    guided = sorted(
-        (s for s in by_setting if s != BASELINE),
-        key=lambda s: -stats_module.mean(r["physics_iq_score"] for r in by_setting[s]),
-    )
+    guided = sorted((s for s in by_setting if s != BASELINE),
+                    key=lambda s: -score_of(by_setting[s]))
     order = ([BASELINE] if BASELINE in by_setting else []) + guided
 
     control = {}
@@ -136,17 +162,17 @@ def main() -> None:
     print("-" * len(header))
 
     reference_motion = stats_module.mean(r["reference_motion"] for r in rows)
+    baseline_score = score_of(by_setting[BASELINE]) if BASELINE in by_setting else float("nan")
     for setting in order:
         group = by_setting[setting]
-        score = stats_module.mean(r["physics_iq_score"] for r in group)
+        score = score_of(group)
         motion = stats_module.mean(r["motion"] for r in group)
 
-        delta = ""
-        if control and setting != BASELINE:
-            paired = [r["physics_iq_score"] - control["physics_iq_score"][r["sample_id"]]
-                      for r in group if r["sample_id"] in control["physics_iq_score"]]
-            if paired:
-                delta = f"{stats_module.mean(paired):+.4f}"
+        # The score is pooled, so this is a difference of two pooled scores rather than a
+        # mean of per-clip deltas. The clips are the same in both, which is what the
+        # pairing was for.
+        delta = ("" if setting == BASELINE or baseline_score != baseline_score
+                 else f"{score - baseline_score:+.4f}")
 
         rms = [r["prior_rms"] for r in group
                if isinstance(r.get("prior_rms"), float) and r["prior_rms"] == r["prior_rms"]]
