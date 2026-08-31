@@ -28,6 +28,7 @@ from .wan import (
     WAN21_T2V_1_3B,
     WAN21_T2V_14B,
     WAN22_I2V_A14B,
+    WAN22_TI2V_5B,
     WanBackend,
 )
 
@@ -71,6 +72,12 @@ BACKENDS: dict[str, BackendEntry] = {
     # thing that differs here is which weights are pulled.
     "wan22_i2v_a14b": BackendEntry(
         WanBackend, WAN22_I2V_A14B, "Wan-AI/Wan2.2-I2V-A14B-Diffusers", "i2v", validated=False
+    ),
+    # Wan2.2's small unified text-and-image-to-video model: one 5B transformer instead of
+    # two 14B experts, and its own 48-channel VAE. The lightest I2V option here by a wide
+    # margin -- roughly 10 GB of transformer weights against 28 GB per A14B expert.
+    "wan22_ti2v_5b": BackendEntry(
+        WanBackend, WAN22_TI2V_5B, "Wan-AI/Wan2.2-TI2V-5B-Diffusers", "i2v", validated=False
     ),
 }
 

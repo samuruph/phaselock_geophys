@@ -43,6 +43,7 @@ def test_registry_contains_the_expected_backends():
         "wan21_i2v_14b_480p",
         "wan21_i2v_14b_720p",
         "wan22_i2v_a14b",
+        "wan22_ti2v_5b",
     }
 
 
@@ -53,6 +54,7 @@ def test_oversized_checkpoints_are_flagged_unvalidated():
     assert not get_entry("wan21_t2v_14b").validated
     assert not get_entry("wan21_i2v_14b_480p").validated
     assert not get_entry("wan22_i2v_a14b").validated
+    assert not get_entry("wan22_ti2v_5b").validated
 
 
 def test_unknown_backend_names_raise_with_the_available_list():

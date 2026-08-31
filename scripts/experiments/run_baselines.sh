@@ -23,3 +23,10 @@ python scripts/run_physics_iq.py \
   --config configs/experiments/physics_iq_wan22_i2v.yaml \
   --guidance baseline -- \
   output__root=/data/experiments/physics-iq/wan22-i2v
+
+# Wan2.2-TI2V-5B            50 steps, cfg 5.0, 121 frames @ 24 fps, 704x1280
+# The lightest of the Wan options: one 5B transformer, not two 14B experts.
+python scripts/run_physics_iq.py \
+  --config configs/experiments/physics_iq_wan22_ti2v_5b.yaml \
+  --guidance baseline -- \
+  output__root=/data/experiments/physics-iq/wan22-ti2v-5b

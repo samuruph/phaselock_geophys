@@ -61,11 +61,62 @@ WAN21_I2V_14B_720P = _wan_spec("wan2.1-i2v-14b-720p", height=720, width=1280, fl
 # overriding it would be a modification, which is exactly what a baseline must not be.
 WAN22_I2V_A14B = _wan_spec("wan2.2-i2v-a14b", flow_shift=None)
 
+# Wan2.2 TI2V-5B does NOT reuse Wan2.1's VAE. It ships a new one at 16x spatial (not 8x)
+# with 48 latent channels (not 16), so every constant below differs and none of the 2.1
+# spec applies -- hence a spec written out rather than another _wan_spec call.
+#
+# It also conditions differently. `boundary_ratio` is None, so there is one transformer
+# rather than the A14B pair, and `expand_timesteps` is True: the first frame is imposed by
+# masking the *timestep* per token rather than by concatenating condition channels onto the
+# input. That is why in_channels is 48 and not 48 + mask + condition. diffusers does all of
+# it inside the pipeline; nothing here has to know.
+#
+# 704x1280 at 24 fps for 121 frames = 5.04 s, against the benchmark's 5.000 s window.
+_WAN22_5B_LATENTS_MEAN = (
+    -0.2289, -0.0052, -0.1323, -0.2339, -0.2799, 0.0174, 0.1838, 0.1557,
+    -0.1382, 0.0542, 0.2813, 0.0891, 0.157, -0.0098, 0.0375, -0.1825,
+    -0.2246, -0.1207, -0.0698, 0.5109, 0.2665, -0.2108, -0.2158, 0.2502,
+    -0.2055, -0.0322, 0.1109, 0.1567, -0.0729, 0.0899, -0.2799, -0.123,
+    -0.0313, -0.1649, 0.0117, 0.0723, -0.2839, -0.2083, -0.052, 0.3748,
+    0.0152, 0.1957, 0.1433, -0.2944, 0.3573, -0.0548, -0.1681, -0.0667,
+)
+_WAN22_5B_LATENTS_STD = (
+    0.4765, 1.0364, 0.4514, 1.1677, 0.5313, 0.499, 0.4818, 0.5013,
+    0.8158, 1.0344, 0.5894, 1.0901, 0.6885, 0.6165, 0.8454, 0.4978,
+    0.5759, 0.3523, 0.7135, 0.6804, 0.5833, 1.4146, 0.8986, 0.5659,
+    0.7069, 0.5338, 0.4889, 0.4917, 0.4069, 0.4999, 0.6866, 0.4093,
+    0.5709, 0.6065, 0.6415, 0.4944, 0.5726, 1.2042, 0.5458, 1.6887,
+    0.3971, 1.06, 0.3943, 0.5537, 0.5444, 0.4089, 0.7468, 0.7744,
+)
+
+WAN22_TI2V_5B = LatentSpec(
+    name="wan2.2-ti2v-5b",
+    layout="BCTHW",
+    temporal_ratio=4,
+    spatial_ratio=16,
+    channels=48,
+    patch_size=(1, 2, 2),
+    default_num_frames=121,
+    default_fps=24,
+    default_height=704,
+    default_width=1280,
+    latents_mean=_WAN22_5B_LATENTS_MEAN,
+    latents_std=_WAN22_5B_LATENTS_STD,
+    flow_shift=None,          # ships 5.0; leave the checkpoint's own scheduler alone
+)
+
 
 class WanBackend(VideoBackend):
-    """Wan2.1, in either text-to-video or image-to-video mode.
+    """Wan2.1 or Wan2.2, in either text-to-video or image-to-video mode.
 
-    Only the T2V-1.3B path is exercised on the current single-GPU box; the 14B specs
+    One class covers all of them because diffusers absorbs what differs: Wan2.2 A14B's
+    two-expert switch, TI2V-5B's timestep-masked conditioning, and whether the CLIP image
+    encoder is used at all (gated on ``transformer.config.image_dim``). What this class
+    still owns is the latent layout and normalisation, and those DO differ -- TI2V-5B has
+    48 channels at 16x spatial against everything else's 16 at 8x, which is why
+    :meth:`_validate_vae_constants` checks the spec against the checkpoint on construction.
+
+    Only the T2V-1.3B path is exercised on the current single-GPU box; the larger specs
     are registered so configs and layout handling are correct, but they are too large
     to validate here.
     """

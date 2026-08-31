@@ -1,0 +1,46 @@
+# Wan2.2-TI2V-5B on Physics-IQ, unguided baseline.
+#
+#   python scripts/run_physics_iq.py --config configs/experiments/physics_iq_wan22_ti2v_5b.yaml \
+#     --guidance baseline -- output__root=/data/experiments/physics-iq/wan22-ti2v-5b
+#
+# 121 frames at 24 fps is 5.04 s, and the benchmark scores the first 5.000 s = 120 frames.
+# Note the native resolution is 704x1280, appreciably larger than the other backends'
+# 480x832 -- the clips are letterboxed to it either way, but it costs time.
+#
+# The light one: a single 5B transformer, not A14B's two 14B experts, so roughly 10 GB of
+# transformer weights against 28 GB per expert. It should be the easiest of the three Wan
+# entries to fit and the fastest to run.
+#
+# It brings its own VAE -- 48 latent channels at 16x spatial, where every other Wan spec
+# here is 16 channels at 8x -- and conditions on the first frame by masking the timestep
+# per token rather than by concatenating condition channels. All of that is inside
+# diffusers; the backend only has to get the latent geometry right, which the spec does
+# and _validate_vae_constants checks against the checkpoint on load.
+#
+# Settings are the model card's own example. flow_shift is left as the checkpoint ships
+# it (5.0).
+backend:
+  name: wan22_ti2v_5b
+  dtype: bfloat16          # the VAE is forced to fp32 by the backend; its per-channel
+  offload: true            # normalisation is fragile in bf16
+data:
+  name: physics_iq
+  limit: null              # all 198 take-1 scenarios
+  seed: 0
+
+generation:
+  num_steps: 50            # the model card's own example
+  guidance_scale: 5.0      # ditto
+  seed: 42                 # same seed as the CogVideoX runs
+  negative_prompt: "low quality"
+
+# Unused by --guidance baseline; kept so the file is a drop-in for a guided run later.
+phaselock:
+  few_steps: 2
+  guidance_strength: 0.05
+  guide_start: 0
+  guide_end: 25
+  few_step_prior_type: motion
+
+output:
+  name: physics_iq
