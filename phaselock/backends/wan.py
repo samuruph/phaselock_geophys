@@ -50,6 +50,17 @@ WAN21_I2V_14B_480P = _wan_spec("wan2.1-i2v-14b-480p")
 # The 720P I2V checkpoint is trained at a larger flow shift.
 WAN21_I2V_14B_720P = _wan_spec("wan2.1-i2v-14b-720p", height=720, width=1280, flow_shift=5.0)
 
+# Wan2.2 A14B is a mixture of experts: two 14B transformers, `transformer` for the
+# high-noise stages and `transformer_2` below `boundary_ratio * num_train_timesteps`.
+# diffusers switches between them inside the loop and offloads them in sequence, so
+# nothing here has to know -- the latent geometry is unchanged, because 2.2 A14B reuses
+# Wan2.1's AutoencoderKLWan (4x8x8, 16 channels) rather than the 16x16x4 VAE that ships
+# with the TI2V-5B checkpoint.
+#
+# flow_shift is None deliberately: the checkpoint ships its own scheduler config and
+# overriding it would be a modification, which is exactly what a baseline must not be.
+WAN22_I2V_A14B = _wan_spec("wan2.2-i2v-a14b", flow_shift=None)
+
 
 class WanBackend(VideoBackend):
     """Wan2.1, in either text-to-video or image-to-video mode.

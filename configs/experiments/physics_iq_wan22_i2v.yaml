@@ -1,0 +1,41 @@
+# Wan2.2-I2V-A14B on Physics-IQ, unguided baseline.
+#
+#   python scripts/run_physics_iq.py --config configs/experiments/physics_iq_wan22_i2v.yaml \
+#     --guidance baseline -- output__root=/data/experiments/physics-iq/wan22-i2v
+#
+# 81 frames at 16 fps is 5.06 s, and the benchmark scores the first 5.000 s = 80 frames --
+# so this backend covers the window almost exactly, where CogVideoX generates 6.125 s and
+# is truncated.
+#
+# Wan2.2 A14B is a mixture of experts: two 14B transformers, switched at
+# boundary_ratio * num_train_timesteps. diffusers handles the switch and the offload order
+# internally, so this is still a plain pipeline call. It also skips the CLIP image encoder
+# that Wan2.1 uses -- the pipeline gates that on transformer.config.image_dim.
+#
+# num_steps and guidance_scale are the reference script's, NOT the diffusers defaults.
+# flow_shift is left as the checkpoint ships it, for the same reason.
+backend:
+  name: wan22_i2v_a14b
+  dtype: bfloat16          # the VAE is forced to fp32 by the backend; its per-channel
+  offload: true            # normalisation is fragile in bf16
+data:
+  name: physics_iq
+  limit: null              # all 198 take-1 scenarios
+  seed: 0
+
+generation:
+  num_steps: 40            # from the reference script, not the diffusers default of 50
+  guidance_scale: 3.5      # from the reference script, not the diffusers default of 5.0
+  seed: 42                 # same seed as the CogVideoX runs
+  negative_prompt: "low quality"
+
+# Unused by --guidance baseline; kept so the file is a drop-in for a guided run later.
+phaselock:
+  few_steps: 2
+  guidance_strength: 0.05
+  guide_start: 0
+  guide_end: 25
+  few_step_prior_type: motion
+
+output:
+  name: physics_iq

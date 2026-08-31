@@ -27,6 +27,7 @@ from .wan import (
     WAN21_I2V_14B_720P,
     WAN21_T2V_1_3B,
     WAN21_T2V_14B,
+    WAN22_I2V_A14B,
     WanBackend,
 )
 
@@ -65,6 +66,11 @@ BACKENDS: dict[str, BackendEntry] = {
     ),
     "wan21_i2v_14b_720p": BackendEntry(
         WanBackend, WAN21_I2V_14B_720P, "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers", "i2v", validated=False
+    ),
+    # Wan2.2's mixture of experts. Same pipeline class and same VAE as 2.1, so the only
+    # thing that differs here is which weights are pulled.
+    "wan22_i2v_a14b": BackendEntry(
+        WanBackend, WAN22_I2V_A14B, "Wan-AI/Wan2.2-I2V-A14B-Diffusers", "i2v", validated=False
     ),
 }
 
