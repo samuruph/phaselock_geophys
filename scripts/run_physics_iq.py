@@ -241,6 +241,9 @@ def main() -> None:
     source = args.source or config.phaselock.few_step_prior_source
     pipeline = PhaseLockPipeline(
         backend,
+        prior_mode=config.phaselock.prior_mode,
+        betas=(config.phaselock.beta1, config.phaselock.beta2),
+        running_momentum_mode=config.phaselock.running_momentum_mode,
         few_steps=config.phaselock.few_steps,
         full_steps=config.generation.num_steps,
         guidance_strength=config.phaselock.guidance_strength,

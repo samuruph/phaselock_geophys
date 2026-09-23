@@ -28,7 +28,13 @@ phaselock:
   guide_start: 0
   guide_end: 25
   few_step_prior_type: motion
-  prior_mode: few_step
+  
+  # Options: few_step, running_momentum
+  prior_mode: running_momentum
+  beta1: 0.9
+  beta2: 0.999
+  running_momentum_mode: residual # residual or snr
 
 output:
-  name: physics_iq_test
+  root: /data/experiments/phaselock_running_momentum
+  name: physics_iq_test_running_momentum

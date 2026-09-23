@@ -283,3 +283,113 @@ class LatentDeltaGuidance:
         scale = self.backend.renoise_scale(next_timestep).to(canonical.device)
         guided = canonical + (scale * delta).to(canonical.dtype)
         return from_canonical(guided, self.spec).to(latents.dtype)
+
+
+class RunningMomentumGuidance:
+    def __init__(
+        self,
+        spec: LatentSpec,
+        guidance_strength: float = 0.05,
+        guide_start: int = 0,
+        guide_end: int = 25,
+        mode: str = "residual",
+        betas: tuple[float, float] = (0.9, 0.999),
+        velocity_decay: float = 0.01,
+        epsilon: float = 1e-8,
+    ):
+        if mode not in {"residual", "snr"}:
+            raise ValueError(
+                f"unknown momentum mode {mode!r}; "
+                "expected 'residual' or 'snr'"
+            )
+
+        if guide_end <= guide_start:
+            raise ValueError("guide_end must be greater than guide_start")
+
+        self.spec = spec
+        self.guidance_strength = guidance_strength
+        self.guide_start = guide_start
+        self.guide_end = guide_end
+        self.mode = mode
+        self.beta1, self.beta2 = betas
+        self.velocity_decay = velocity_decay
+        self.epsilon = epsilon
+
+        self.m1 = None
+        self.m2 = None
+        self.step = 0
+
+    def compute_schedule(self, step_index: int) -> float:
+        """``lambda(k) = lambda_0 * (1 - (k - k_start) / (k_end - k_start))``.
+
+        Strong while the global layout is forming, relaxing to leave later steps free
+        for texture refinement.
+        """
+        if step_index < self.guide_start or step_index >= self.guide_end:
+            return 0.0
+
+        progress = (step_index - self.guide_start) / (
+            self.guide_end - self.guide_start
+        )
+        return self.guidance_strength * (1.0 - progress)
+
+    def _update_momentum(self, current: torch.Tensor) -> torch.Tensor:
+        if self.m1 is None:
+            self.m1 = torch.zeros_like(current)
+            self.m2 = torch.zeros_like(current)
+
+        self.step += 1
+
+        difference = current - self.m1
+
+        self.m1 = (1.0 - self.velocity_decay) * self.m1
+        self.m1 = (
+            self.beta1 * self.m1
+            + (1.0 - self.beta1) * current
+        )
+        self.m2 = (
+            self.beta2 * self.m2
+            + (1.0 - self.beta2) * difference.square()
+        )
+
+        bias_correction_1 = 1.0 - self.beta1 ** self.step
+        bias_correction_2 = 1.0 - self.beta2 ** self.step
+
+        mean = self.m1 / bias_correction_1
+        variance = self.m2 / bias_correction_2
+
+        if self.mode == "residual":
+            return (mean - current) / (
+                torch.sqrt(variance) + self.epsilon
+            )
+
+        return mean / (torch.sqrt(variance) + self.epsilon)
+
+    def __call__(
+        self,
+        pipe: Any,
+        step_index: int,
+        timestep: torch.Tensor,
+        callback_kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        latents = callback_kwargs.get("latents")
+        if latents is None:
+            return callback_kwargs
+
+        canonical = to_canonical(latents, self.spec)
+
+        # Frame-wise latent motion. Frame zero remains the conditioning anchor.
+        current = canonical[1:] - canonical[:-1]
+
+        correction = self._update_momentum(current)
+        strength = self.compute_schedule(step_index)
+
+        if strength != 0.0:
+            guided = canonical.clone()
+            guided[1:] = canonical[1:] + strength * correction
+            callback_kwargs["latents"] = (
+                from_canonical(guided, self.spec)
+                .to(latents.dtype)
+            )
+
+        return callback_kwargs

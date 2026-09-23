@@ -161,6 +161,12 @@ class PhaseLockConfig:
     ``velocity`` are model outputs -- the network's current belief about the clean video,
     and the flow field carrying the state there. See :data:`phaselock.guidance.SOURCES`."""
 
+    prior_mode: str = "running_momentum"  # running_momentum or few_step (standard PhaaseLock) 
+    beta1: float = 0.9
+    beta2: float = 0.999
+    running_momentum_mode: str = "residual" # residual or snr
+    """Which quantity the momentum guidance is built from."""
+
     def __post_init__(self) -> None:
         from .guidance import SOURCES
         from .operators import OPERATORS

@@ -41,6 +41,7 @@ phaselock:
   guide_start: 0
   guide_end: 25
   few_step_prior_type: motion
+  prior_mode: few_step
 
 output:
   name: physics_iq

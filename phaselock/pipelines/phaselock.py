@@ -18,8 +18,8 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 from ..backends.base import VideoBackend
-from ..guidance import LatentDeltaGuidance, extract_prior
-
+from ..guidance import LatentDeltaGuidance, RunningMomentumGuidance, extract_prior
+        
 
 class _FinalStateCapture:
     """Records the denoiser's own view at the last step of a pass.
@@ -61,6 +61,9 @@ class PhaseLockPipeline:
     def __init__(
         self,
         backend: VideoBackend,
+        prior_mode: str = "few_step",
+        betas: Tuple[float, float] = (0.9, 0.999),
+        running_momentum_mode: str = "residual",
         few_steps: int = 2,
         full_steps: int = 50,
         guidance_strength: float = 0.05,
@@ -70,6 +73,10 @@ class PhaseLockPipeline:
         source: str = "latent",
     ):
         self.backend = backend
+        self.prior_mode = prior_mode
+        if self.prior_mode == "running_momentum":
+            self.betas = betas
+            self.running_momentum_mode = running_momentum_mode
         self.few_steps = few_steps
         self.full_steps = full_steps
         self.guidance_strength = guidance_strength
@@ -108,6 +115,7 @@ class PhaseLockPipeline:
         from ..backends import load_backend
 
         phaselock_keys = {
+            "prior_mode",
             "few_steps",
             "full_steps",
             "guidance_strength",
@@ -155,6 +163,31 @@ class PhaseLockPipeline:
             negative_prompt=negative_prompt,
         )
 
+        # Option A: running-momentum guidance, without freezed few-step guidance
+        if self.prior_mode == "running_momentum":
+            guidance = RunningMomentumGuidance(
+                spec=spec,
+                guidance_strength=self.guidance_strength,
+                guide_start=self.guide_start,
+                guide_end=self.guide_end,
+                mode=self.running_momentum_mode,
+                betas=self.betas,
+            )
+
+            final_result = self.pipe(
+                **shared,
+                num_inference_steps=self.full_steps,
+                generator=torch.Generator(device=device).manual_seed(seed),
+                callback_on_step_end=guidance,
+                callback_on_step_end_tensor_inputs=["latents"],
+            ).frames[0]
+
+            if return_few_result:
+                return final_result, None
+
+            return final_result
+
+        # Option B: few-step guidance, with a two-stage pass. This is the original PhaseLock.
         # Stage 1: capture the prior from a few-step pass.
         capture = _FinalStateCapture(self.backend) if self.source != "latent" else None
         few_result = self.pipe(
