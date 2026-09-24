@@ -162,3 +162,58 @@ def test_x0_hat_momentum_requires_captured_prediction():
     post = from_canonical(torch.zeros(3, COGVIDEOX_5B.channels, 2, 2), COGVIDEOX_5B)
     with pytest.raises(RuntimeError, match="prediction captured"):
         controller(None, 0, torch.tensor(750), {"latents": post})
+
+
+@pytest.mark.parametrize("spec", [COGVIDEOX_5B, WAN21_T2V_1_3B])
+@pytest.mark.parametrize("step,weight", [(0, 0.0), (1, 0.15625), (2, 0.5), (4, 1.0)])
+def test_blended_running_momentum_interpolates_motion_before_moments(spec, step, weight):
+    clean = torch.zeros(3, spec.channels, 2, 2)
+    clean[1], clean[2] = 3, 8
+    post = torch.zeros_like(clean)
+    post[1], post[2] = 2, 6
+    state = SimpleNamespace(x0=clean, drift=torch.zeros_like(clean), tau=.25)
+    capture = SimpleNamespace(consume=lambda _: state)
+    trace = MomentumTrace("blend")
+    controller = RunningMomentumGuidance(
+        spec, source="blend", prediction_capture=capture, recorder=trace,
+        guidance_strength=.05, guide_end=5,
+    )
+    out = controller(None, step, torch.tensor(750), {"latents": from_canonical(post, spec)})
+    clean_motion = clean[1:] - clean[:-1]
+    latent_motion = post[1:] - post[:-1]
+    expected = (1 - weight) * clean_motion + weight * latent_motion
+    assert torch.allclose(trace.steps[0].current, expected)
+    assert torch.allclose(controller.m1, expected * .1)
+    assert torch.allclose(controller.m2, expected.square() * .001)
+    assert trace.summaries()[0]["latent_weight"] == pytest.approx(weight)
+    strength = controller.compute_schedule(step)
+    assert torch.allclose(to_canonical(out["latents"], spec)[1:],
+                          post[1:] + strength * trace.steps[0].correction)
+    assert torch.equal(to_canonical(out["latents"], spec)[0], post[0])
+
+
+def test_blended_running_momentum_one_step_window_uses_x0_hat():
+    clean = torch.zeros(3, COGVIDEOX_5B.channels, 2, 2)
+    clean[1:] = 3
+    post = torch.zeros_like(clean)
+    trace = MomentumTrace("blend")
+    capture = SimpleNamespace(consume=lambda _: SimpleNamespace(
+        x0=clean, drift=torch.zeros_like(clean), tau=.5,
+    ))
+    controller = RunningMomentumGuidance(
+        COGVIDEOX_5B, source="blend", guide_end=4, guide_start=3,
+        prediction_capture=capture, recorder=trace,
+    )
+    controller(None, 3, torch.tensor(500), {"latents": from_canonical(post, COGVIDEOX_5B)})
+    assert controller.blend_latent_weight(3) == 0.0
+    assert trace.summaries()[0]["latent_weight"] == 0.0
+    assert torch.equal(trace.steps[0].current, clean[1:] - clean[:-1])
+
+
+@pytest.mark.parametrize("source", ["x0_hat", "blend"])
+def test_prediction_based_momentum_requires_capture(source):
+    controller = RunningMomentumGuidance(COGVIDEOX_5B, guide_end=2, source=source,
+                                         prediction_capture=SimpleNamespace(consume=lambda _: None))
+    post = from_canonical(torch.zeros(3, COGVIDEOX_5B.channels, 2, 2), COGVIDEOX_5B)
+    with pytest.raises(RuntimeError, match="prediction captured"):
+        controller(None, 0, torch.tensor(750), {"latents": post})

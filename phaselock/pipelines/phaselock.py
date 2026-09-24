@@ -90,8 +90,8 @@ class PhaseLockPipeline:
         # Which tensor the operator is measured on. "latent" is the sampler state and is
         # PhaseLock's own; the others are model outputs and need `noise_pred`.
         self.source = source
-        if self.prior_mode == "running_momentum" and source not in {"latent", "x0_hat"}:
-            raise ValueError("running momentum source must be 'latent' or 'x0_hat'")
+        if self.prior_mode == "running_momentum" and source not in {"latent", "x0_hat", "blend"}:
+            raise ValueError("running momentum source must be 'latent', 'x0_hat', or 'blend'")
         self.last_prior_rms: float = float("nan")
 
     @property
@@ -181,7 +181,7 @@ class PhaseLockPipeline:
         if self.prior_mode == "running_momentum":
             prediction_capture = (
                 StepPredictionCapture(self.backend, guidance_scale)
-                if diagnostic_recorder is not None or self.source == "x0_hat"
+                if diagnostic_recorder is not None or self.source in {"x0_hat", "blend"}
                 else None
             )
             guidance = RunningMomentumGuidance(

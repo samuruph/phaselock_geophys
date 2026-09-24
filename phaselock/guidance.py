@@ -309,8 +309,8 @@ class RunningMomentumGuidance:
 
         if guide_end <= guide_start:
             raise ValueError("guide_end must be greater than guide_start")
-        if source not in {"latent", "x0_hat"}:
-            raise ValueError("running momentum source must be 'latent' or 'x0_hat'")
+        if source not in {"latent", "x0_hat", "blend"}:
+            raise ValueError("running momentum source must be 'latent', 'x0_hat', or 'blend'")
 
         self.spec = spec
         self.guidance_strength = guidance_strength
@@ -344,6 +344,14 @@ class RunningMomentumGuidance:
             self.guide_end - self.guide_start
         )
         return self.guidance_strength * (1.0 - progress)
+
+    def blend_latent_weight(self, step_index: int) -> float:
+        """Smoothly move from predicted clean motion to post-step latent motion."""
+        span = self.guide_end - self.guide_start - 1
+        if span <= 0:
+            return 0.0
+        u = min(1.0, max(0.0, (step_index - self.guide_start) / span))
+        return u * u * (3.0 - 2.0 * u)
 
     def _update_momentum(self, current: torch.Tensor) -> torch.Tensor:
         if self.m1 is None:
@@ -396,15 +404,21 @@ class RunningMomentumGuidance:
         # Preserve the original latent mode: callback latents are post-scheduler.
         # x0_hat is only available from the model prediction made at the current t.
         state = self.prediction_capture.consume(timestep) if self.prediction_capture else None
+        latent_weight = None
         if self.source == "latent":
-            source_state = canonical
+            current = canonical[1:] - canonical[:-1]
         else:
             if state is None:
-                raise RuntimeError("x0_hat running momentum requires a prediction captured at every denoising step")
-            source_state = state.x0
-            if source_state.shape != canonical.shape:
-                raise ValueError(f"captured x0_hat shape {source_state.shape} does not match callback latents {canonical.shape}")
-        current = source_state[1:] - source_state[:-1]
+                raise RuntimeError(f"{self.source} running momentum requires a prediction captured at every denoising step")
+            if state.x0.shape != canonical.shape:
+                raise ValueError(f"captured x0_hat shape {state.x0.shape} does not match callback latents {canonical.shape}")
+            clean_motion = state.x0[1:] - state.x0[:-1]
+            if self.source == "x0_hat":
+                current = clean_motion
+            else:
+                latent_weight = self.blend_latent_weight(step_index)
+                latent_motion = canonical[1:] - canonical[:-1]
+                current = (1.0 - latent_weight) * clean_motion + latent_weight * latent_motion
 
         correction = self._update_momentum(current)
         strength = self.compute_schedule(step_index)
@@ -424,6 +438,7 @@ class RunningMomentumGuidance:
                 m1=self.m1, m2=self.m2, mean=self.mean, variance=self.variance,
                 correction=correction, strength=strength, x0=state.x0,
                 latents_before=canonical, latents_after=guided, flow=state.drift,
+                latent_weight=latent_weight,
             )
 
         return callback_kwargs

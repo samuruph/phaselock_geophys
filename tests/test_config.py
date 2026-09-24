@@ -234,3 +234,10 @@ def test_run_id_becomes_the_leading_path_segment(tmp_path):
     assert config.output.base() == (
         tmp_path / "20260810_1030_n100" / "wan21_t2v_1_3b" / "likephys" / "inversion"
     )
+
+
+def test_running_momentum_blend_config_loads_and_default_stays_latent():
+    assert load().phaselock.running_momentum_source == "latent"
+    path = Path(__file__).parent.parent / "configs/experiments/physics_iq_running_momentum.yaml"
+    assert load(path).phaselock.running_momentum_source == "blend"
+    assert load(**parse_overrides(["phaselock__running_momentum_source=blend"])).phaselock.running_momentum_source == "blend"

@@ -58,6 +58,7 @@ class DiagnosticStep:
     latents_after: Optional[torch.Tensor] = None
     flow: Optional[torch.Tensor] = None
     strength: float = 0.0
+    latent_weight: Optional[float] = None
 
     def summary(self) -> dict[str, Any]:
         applied = self.correction * self.strength
@@ -68,6 +69,7 @@ class DiagnosticStep:
             "timestep": self.timestep,
             "tau": self.tau,
             "lambda": self.strength,
+            "latent_weight": self.latent_weight,
             "current_rms": _rms(self.current),
             "bias_corrected_mean_rms": _rms(mean),
             "bias_corrected_variance_mean": float(variance.float().mean()),
@@ -106,6 +108,7 @@ class MomentumTrace:
         latents_before: Optional[torch.Tensor] = None,
         latents_after: Optional[torch.Tensor] = None, flow: Optional[torch.Tensor] = None,
         mean: Optional[torch.Tensor] = None, variance: Optional[torch.Tensor] = None,
+        latent_weight: Optional[float] = None,
     ) -> None:
         if self.record_steps is not None and step not in self.record_steps:
             return
@@ -115,6 +118,7 @@ class MomentumTrace:
             tau=float(tau), current=_cpu(current), m1=_cpu(m1), m2=_cpu(m2),
             correction=_cpu(correction), mean=_cpu(mean), variance=_cpu(variance),
             strength=float(strength), x0=_cpu(x0),
+            latent_weight=latent_weight,
             latents_before=_cpu(latents_before) if self.save_raw else None,
             latents_after=_cpu(latents_after) if self.save_raw else None, flow=_cpu(flow),
         ))
@@ -260,8 +264,9 @@ def render_dashboard(
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     source = (provenance or {}).get("running_momentum_source", "latent")
-    current_title = ("x0_hat delta at t" if source == "x0_hat"
-                     else "Post-step latent delta")
+    current_title = ("x0_hat delta at t" if source == "x0_hat" else
+                     "Blended motion delta" if source == "blend" else
+                     "Post-step latent delta")
     expected_frames = 1 + temporal_ratio * (guided.steps[0].current.shape[0] + 1)
     videos: list[np.ndarray] = []
     panel_size = None
@@ -358,7 +363,9 @@ def render_dashboard(
                 header = np.full((40, dashboard_width, 3), 18, np.uint8)
                 title = (f"Denoising step index {step.step} | t={step.timestep:.0f}"
                          f" | tau={step.tau:.3f} | lambda={step.strength:.3g}"
-                         f" | frame {frame_index+1}/{frame_count} | {transition_text}")
+                         + (f" | latent weight={step.latent_weight:.2f}"
+                            if step.latent_weight is not None else "")
+                         + f" | frame {frame_index+1}/{frame_count} | {transition_text}")
                 cv2.putText(header, title, (10, 26), cv2.FONT_HERSHEY_SIMPLEX, .42,
                             (250, 250, 250), 1, cv2.LINE_AA)
                 panels = [
@@ -421,6 +428,8 @@ def render_dashboard(
         "signal_definitions": {
             "current_delta": ("adjacent-frame difference of x0_hat(z_t, t) from the current model prediction"
                               if source == "x0_hat" else
+                              "smooth weighted blend of current-step x0_hat and post-step latent adjacent-frame differences"
+                              if source == "blend" else
                               "adjacent-frame difference of callback latents after the scheduler update")
                              + "; panel and chart show RMS across latent channels",
             "m1": "bias-corrected running mean used by the controller, visualized as per-pixel RMS across latent channels; raw_m1 is also included in each step summary",

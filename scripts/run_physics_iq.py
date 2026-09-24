@@ -136,9 +136,9 @@ def parse_args() -> argparse.Namespace:
                         choices=list(GUIDANCES) + list(GUIDANCE_ALIASES),
                         help="one control plus any frame operators; all run on the same "
                              "seed and clips, so every difference is paired")
-    parser.add_argument("--source", default=None, choices=list(SOURCES),
+    parser.add_argument("--source", default=None, choices=list(SOURCES) + ["blend"],
                         help="frame-difference source: running momentum uses same-timestep "
-                             "post-step latent or current-step x0_hat; few-step mode also accepts velocity")
+                             "post-step latent, current-step x0_hat, or their blend; few-step mode also accepts velocity")
     parser.add_argument("--categories", type=_list,
                         help="comma-separated, from: Solid Mechanics, Fluid Dynamics, "
                              "Optics, Thermodynamics, Magnetism. Default is all five")
@@ -261,8 +261,10 @@ def main() -> None:
     running = config.phaselock.prior_mode == "running_momentum"
     source = args.source or (config.phaselock.running_momentum_source if running
                              else config.phaselock.few_step_prior_source)
-    if running and source not in {"latent", "x0_hat"}:
-        raise SystemExit("running momentum --source must be latent or x0_hat")
+    if running and source not in {"latent", "x0_hat", "blend"}:
+        raise SystemExit("running momentum --source must be latent, x0_hat, or blend")
+    if not running and source == "blend":
+        raise SystemExit("few-step --source must be latent, x0_hat, or velocity")
     pipeline = PhaseLockPipeline(
         backend,
         prior_mode=config.phaselock.prior_mode,
