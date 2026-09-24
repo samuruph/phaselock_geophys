@@ -145,8 +145,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--perspectives", type=_list, help="left,center,right; default all")
     parser.add_argument("--limit", type=int,
                         help="cap the sample count, balanced across categories")
-    parser.add_argument("--sample-id", type=str,
-                        help="run one exact take-1 sample, e.g. 0001 for ball and block fall; "
+    parser.add_argument("--sample-id", nargs="+", type=str,
+                        help="run exact take-1 sample IDs, e.g. --sample-id 0001 0007; "
                              "takes precedence over the balanced --limit")
     parser.add_argument("--save-prior", action=argparse.BooleanOptionalAction, default=True,
                         help="also write the few-step generation the prior is taken from, "
@@ -226,9 +226,12 @@ def main() -> None:
                (args.limit if args.limit is not None else config.data.limit)),
     )
     if args.sample_id:
-        samples = [sample for sample in samples if sample.sample_id == args.sample_id]
-        if not samples:
-            raise SystemExit(f"Physics-IQ take-1 sample {args.sample_id!r} was not found")
+        requested_ids = set(args.sample_id)
+        samples = [sample for sample in samples if sample.sample_id in requested_ids]
+        found_ids = {sample.sample_id for sample in samples}
+        missing_ids = sorted(requested_ids - found_ids)
+        if missing_ids:
+            raise SystemExit(f"Physics-IQ take-1 sample IDs not found: {', '.join(missing_ids)}")
     # A sample with no switch frame cannot be conditioned, and one with no continuation
     # cannot be scored; neither can contribute a row.
     usable = [s for s in samples if s.image_path and s.reference_path]
@@ -238,7 +241,7 @@ def main() -> None:
     if not usable:
         raise SystemExit(f"no usable Physics-IQ samples under {dataset.root}")
     if args.sample_id:
-        logger.info("selected sample %s: %s", usable[0].sample_id, usable[0].meta["scenario"])
+        logger.info("selected samples: %s", ", ".join(sample.sample_id for sample in usable))
 
     backend = load_backend(
         config.backend.name,
@@ -270,6 +273,7 @@ def main() -> None:
         prior_mode=config.phaselock.prior_mode,
         betas=(config.phaselock.beta1, config.phaselock.beta2),
         running_momentum_mode=config.phaselock.running_momentum_mode,
+        velocity_decay=config.phaselock.velocity_decay,
         few_steps=config.phaselock.few_steps,
         full_steps=config.generation.num_steps,
         guidance_strength=config.phaselock.guidance_strength,
@@ -356,7 +360,8 @@ def main() -> None:
                     "backend": config.backend.name, "seed": config.generation.seed,
                     "running_momentum_source": source,
                     "source_state": ("post_scheduler_step_callback_latents" if source == "latent"
-                                     else "model_prediction_x0_hat_from_pre_step_latents_at_t"),
+                                     else "model_prediction_x0_hat_from_pre_step_latents_at_t" if source == "x0_hat"
+                                     else "smooth_blend_of_post_step_latents_and_current_step_x0_hat"),
                     "correction_target": "post_scheduler_step_latents",
                 }
                 diagnostic_trace.save(diagnostic_dir, provenance=diagnostic_provenance)
@@ -396,7 +401,8 @@ def main() -> None:
                 "few_step_prior_source": (pipeline.source if name != "baseline" and not running else ""),
                 "running_momentum_source": (pipeline.source if name != "baseline" and running else ""),
                 "momentum_source_timing": (("post_scheduler_step_callback_latents" if pipeline.source == "latent"
-                                            else "model_prediction_x0_hat_from_pre_step_latents_at_t")
+                                            else "model_prediction_x0_hat_from_pre_step_latents_at_t" if pipeline.source == "x0_hat"
+                                            else "smooth_blend_of_post_step_latents_and_current_step_x0_hat")
                                            if name != "baseline" and running else ""),
                 "prior_rms": (float("nan") if name == "baseline"
                               else pipeline.last_prior_rms),

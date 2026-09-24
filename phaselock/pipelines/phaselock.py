@@ -66,6 +66,7 @@ class PhaseLockPipeline:
         prior_mode: str = "few_step",
         betas: Tuple[float, float] = (0.9, 0.999),
         running_momentum_mode: str = "residual",
+        velocity_decay: float = 0.01,
         few_steps: int = 2,
         full_steps: int = 50,
         guidance_strength: float = 0.05,
@@ -79,6 +80,7 @@ class PhaseLockPipeline:
         if self.prior_mode == "running_momentum":
             self.betas = betas
             self.running_momentum_mode = running_momentum_mode
+            self.velocity_decay = velocity_decay
         self.few_steps = few_steps
         self.full_steps = full_steps
         self.guidance_strength = guidance_strength
@@ -134,6 +136,7 @@ class PhaseLockPipeline:
             "source",
             "betas",
             "running_momentum_mode",
+            "velocity_decay",
         }
         settings = {k: v for k, v in kwargs.items() if k in phaselock_keys}
         loader = {k: v for k, v in kwargs.items() if k not in phaselock_keys}
@@ -191,6 +194,7 @@ class PhaseLockPipeline:
                 guide_end=self.guide_end,
                 mode=self.running_momentum_mode,
                 betas=self.betas,
+                velocity_decay=self.velocity_decay,
                 recorder=diagnostic_recorder,
                 backend=self.backend,
                 prediction_capture=prediction_capture,
