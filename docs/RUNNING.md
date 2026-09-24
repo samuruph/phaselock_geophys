@@ -208,6 +208,27 @@ way to tell. `data__limitt=5` fails immediately, as does a stray key in the YAML
 The resolved config is written to `config.json` next to the results it produced, so any
 output can be traced back to the exact settings.
 
+For a running-momentum sample, enable the denoising dashboard with the dedicated switch:
+
+```bash
+python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml \
+    --sample-id 0001 --guidance motion --diagnostics \
+    diagnostics__record_steps=0,5,10,20,30,40,49
+```
+
+Diagnostics are grouped under `diagnostics/<video-stem>/<setting>/`. That folder contains
+one `dashboard.mp4` joining the selected denoising steps, one full temporal movie per
+selected step in `steps/`, and `dashboard.json` with moment summaries and alignment metadata.
+Each movie plays the predicted clean video beside spatial maps of the stored `m1`, stored
+`m2`, and schedule-scaled guidance actually applied. The bottom plots show those signals
+across normalized diffusion time and across decoded video frames. Latent maps are held over
+the decoded frames belonging to each latent transition, and are resized to the decoded
+frame dimensions without stretching the source aspect ratio. The maps use fixed run-level
+99th-percentile scales. `m1` and `m2` are displayed as channel-pooled magnitudes; guidance
+is displayed as the RMS magnitude of `lambda * correction`. `m2` stays a latent statistic
+and is not decoded as RGB. Frame zero is the conditioning anchor and has no latent transition.
+Use `diagnostics__save_raw_tensors=true` only when you need the full latent tensors later.
+
 | section | key | meaning |
 |---|---|---|
 | `backend` | `name`, `model_id`, `dtype`, `offload` | which model; `model_id` overrides the registry default |
@@ -225,6 +246,7 @@ output can be traced back to the exact settings.
 | | `reconstruction_check` | invert one clip, resample, report PSNR to `reconstruction.json` |
 | `metrics` | `ar_order`, `residual_fit`, `ridge_lambda`, `bootstrap_resamples` | statistic options |
 | `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed` | sampling |
+| `diagnostics` | `enabled`, `record_steps`, `save_raw_tensors`, `fps`, `preview_height`, `output_subdir` | opt-in moment and applied-guidance dashboard, with one replayable movie per selected denoising step |
 | `phaselock` | `few_steps`, `guidance_strength`, `guide_start`, `guide_end` | Latent Delta Guidance, at the paper's defaults. `guide_end: null` resolves to half of `generation.num_steps` |
 | | `few_step_prior_source` | which tensor the prior is measured on: `latent` (the sampler state, PhaseLock's own), `x0_hat` or `velocity` |
 | | `few_step_prior_type` | which quantity the few-step prior is built from and the full pass is held to: `motion` (PhaseLock's own first difference), `accel`, `jerk` or `perr` |

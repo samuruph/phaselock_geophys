@@ -130,6 +130,24 @@ class GenerationConfig:
 
 
 @dataclass(frozen=True)
+class DiagnosticConfig:
+    """Opt-in running-momentum denoising diagnostics."""
+
+    enabled: bool = False
+    record_steps: Optional[list[int]] = None
+    save_raw_tensors: bool = False
+    fps: int = 8
+    preview_height: int = 180
+    output_subdir: str = "diagnostics"
+
+    def __post_init__(self) -> None:
+        if self.fps <= 0 or self.preview_height <= 0:
+            raise ValueError("diagnostics.fps and diagnostics.preview_height must be positive")
+        if self.record_steps is not None and any(step < 0 for step in self.record_steps):
+            raise ValueError("diagnostics.record_steps must contain non-negative steps")
+
+
+@dataclass(frozen=True)
 class PhaseLockConfig:
     """Latent Delta Guidance settings.
 
@@ -241,6 +259,7 @@ class Config:
     inversion: InversionConfig = field(default_factory=InversionConfig)
     metrics: MetricConfig = field(default_factory=MetricConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    diagnostics: DiagnosticConfig = field(default_factory=DiagnosticConfig)
     phaselock: PhaseLockConfig = field(default_factory=PhaseLockConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 

@@ -11,6 +11,7 @@ that Wan works alongside CogVideoX.
 from __future__ import annotations
 
 import gc
+from contextlib import nullcontext
 from typing import Any, List, Optional, Tuple, Union
 
 import torch
@@ -19,6 +20,7 @@ from PIL import Image
 
 from ..backends.base import VideoBackend
 from ..guidance import LatentDeltaGuidance, RunningMomentumGuidance, extract_prior
+from ..analysis.momentum_diagnostics import MomentumTrace, StepPredictionCapture
         
 
 class _FinalStateCapture:
@@ -94,6 +96,12 @@ class PhaseLockPipeline:
     def pipe(self) -> Any:
         return self.backend.pipe
 
+    def _callback_inputs_with_noise(self) -> list:
+        allowed = list(getattr(self.pipe, "_callback_tensor_inputs", []) or [])
+        if "noise_pred" not in allowed:
+            self.pipe._callback_tensor_inputs = list(allowed) + ["noise_pred"]
+        return ["latents", "noise_pred"]
+
     def _callback_inputs(self) -> list:
         """Which tensors the sampler must hand the callback.
 
@@ -104,8 +112,8 @@ class PhaseLockPipeline:
         """
         if self.source == "latent":
             return ["latents"]
-        allowed = getattr(self.pipe, "_callback_tensor_inputs", None)
-        if allowed is not None and "noise_pred" not in allowed:
+        allowed = list(getattr(self.pipe, "_callback_tensor_inputs", []) or [])
+        if "noise_pred" not in allowed:
             self.pipe._callback_tensor_inputs = list(allowed) + ["noise_pred"]
         return ["latents", "noise_pred"]
 
@@ -143,6 +151,7 @@ class PhaseLockPipeline:
         negative_prompt: Optional[str] = None,
         seed: int = 42,
         return_few_result: bool = False,
+        diagnostic_recorder: Optional[MomentumTrace] = None,
     ) -> Union[List[Image.Image], Tuple[List[Image.Image], List[Image.Image]]]:
         """Generate with motion-prior guidance.
 
@@ -165,6 +174,8 @@ class PhaseLockPipeline:
 
         # Option A: running-momentum guidance, without freezed few-step guidance
         if self.prior_mode == "running_momentum":
+            prediction_capture = (StepPredictionCapture(self.backend, guidance_scale)
+                                  if diagnostic_recorder is not None else None)
             guidance = RunningMomentumGuidance(
                 spec=spec,
                 guidance_strength=self.guidance_strength,
@@ -172,15 +183,19 @@ class PhaseLockPipeline:
                 guide_end=self.guide_end,
                 mode=self.running_momentum_mode,
                 betas=self.betas,
+                recorder=diagnostic_recorder,
+                backend=self.backend,
+                prediction_capture=prediction_capture,
             )
 
-            final_result = self.pipe(
-                **shared,
-                num_inference_steps=self.full_steps,
-                generator=torch.Generator(device=device).manual_seed(seed),
-                callback_on_step_end=guidance,
-                callback_on_step_end_tensor_inputs=["latents"],
-            ).frames[0]
+            with prediction_capture or nullcontext():
+                final_result = self.pipe(
+                    **shared,
+                    num_inference_steps=self.full_steps,
+                    generator=torch.Generator(device=device).manual_seed(seed),
+                    callback_on_step_end=guidance,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                ).frames[0]
 
             if return_few_result:
                 return final_result, None

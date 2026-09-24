@@ -296,6 +296,9 @@ class RunningMomentumGuidance:
         betas: tuple[float, float] = (0.9, 0.999),
         velocity_decay: float = 0.01,
         epsilon: float = 1e-8,
+        recorder: Any = None,
+        backend: Any = None,
+        prediction_capture: Any = None,
     ):
         if mode not in {"residual", "snr"}:
             raise ValueError(
@@ -314,9 +317,15 @@ class RunningMomentumGuidance:
         self.beta1, self.beta2 = betas
         self.velocity_decay = velocity_decay
         self.epsilon = epsilon
+        self.recorder = recorder
+        self.backend = backend
+        self.prediction_capture = prediction_capture
 
         self.m1 = None
         self.m2 = None
+        self.mean = None
+        self.variance = None
+        self._previous_latents = None
         self.step = 0
 
     def compute_schedule(self, step_index: int) -> float:
@@ -357,13 +366,17 @@ class RunningMomentumGuidance:
 
         mean = self.m1 / bias_correction_1
         variance = self.m2 / bias_correction_2
+        self.mean = mean
+        self.variance = variance
 
         if self.mode == "residual":
-            return (mean - current) / (
+            correction = (mean - current) / (
                 torch.sqrt(variance) + self.epsilon
             )
+        elif self.mode == "snr":
+            correction = mean / (torch.sqrt(variance) + self.epsilon)
 
-        return mean / (torch.sqrt(variance) + self.epsilon)
+        return correction
 
     def __call__(
         self,
@@ -376,6 +389,8 @@ class RunningMomentumGuidance:
         if latents is None:
             return callback_kwargs
 
+        previous_latents = self._previous_latents
+        self._previous_latents = latents.detach()
         canonical = to_canonical(latents, self.spec)
 
         # Frame-wise latent motion. Frame zero remains the conditioning anchor.
@@ -383,13 +398,26 @@ class RunningMomentumGuidance:
 
         correction = self._update_momentum(current)
         strength = self.compute_schedule(step_index)
-
+        guided = canonical.clone()
         if strength != 0.0:
-            guided = canonical.clone()
             guided[1:] = canonical[1:] + strength * correction
             callback_kwargs["latents"] = (
                 from_canonical(guided, self.spec)
                 .to(latents.dtype)
+            )
+
+        if self.recorder is not None:
+            x0 = flow = None
+            noise_pred = callback_kwargs.get("noise_pred")
+            state = self.prediction_capture.consume(timestep) if self.prediction_capture else None
+            if state is None and noise_pred is not None and self.backend is not None and previous_latents is not None:
+                state = self.backend.denoiser_state(previous_latents, noise_pred, timestep)
+            x0, flow, tau = ((state.x0, state.drift, state.tau)
+                             if state is not None else (None, None, 0.0))
+            self.recorder.capture(
+                step=step_index, timestep=timestep, tau=tau, current=current,
+                m1=self.m1, m2=self.m2, mean=self.mean, variance=self.variance,
+                correction=correction, strength=strength, x0=x0, latents_before=canonical, latents_after=guided, flow=flow,
             )
 
         return callback_kwargs

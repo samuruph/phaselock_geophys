@@ -78,6 +78,9 @@ from phaselock.experiments.generation import frames_to_tensor
 from phaselock.metrics.motion_mask import (MotionMaskScores, motion_mask_scores,
                                            physics_iq_score)
 from phaselock.guidance import SOURCES
+from phaselock.analysis.momentum_diagnostics import (
+    MomentumTrace, StepPredictionCapture, render_dashboard,
+)
 from phaselock.operators import OPERATORS
 from phaselock.pipelines.phaselock import PhaseLockPipeline
 from phaselock.progress import track
@@ -142,12 +145,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--perspectives", type=_list, help="left,center,right; default all")
     parser.add_argument("--limit", type=int,
                         help="cap the sample count, balanced across categories")
+    parser.add_argument("--sample-id", type=str,
+                        help="run one exact take-1 sample, e.g. 0001 for ball and block fall; "
+                             "takes precedence over the balanced --limit")
     parser.add_argument("--save-prior", action=argparse.BooleanOptionalAction, default=True,
                         help="also write the few-step generation the prior is taken from, "
                              "to videos/few_step/. On by default: it is the prior in RGB, "
                              "and it costs only the export since the pass runs anyway")
     parser.add_argument("--overwrite", action="store_true",
                         help="regenerate videos that are already on disk")
+    parser.add_argument("--diagnostics", action=argparse.BooleanOptionalAction, default=None,
+                        help="enable running-momentum denoising dashboards")
     parser.add_argument("overrides", nargs="*")
     # parse_known_args, not parse_args: argparse fills a positional nargs="*" from the
     # FIRST run of positionals it meets and rejects any later run, so an override that
@@ -168,7 +176,8 @@ def motion_magnitude(frames: torch.Tensor) -> float:
     return float((frames[1:] - frames[:-1]).abs().mean())
 
 
-def generate(pipeline: PhaseLockPipeline, name: str, want_prior: bool, seed: int, **kwargs):
+def generate(pipeline: PhaseLockPipeline, name: str, want_prior: bool, seed: int,
+             diagnostic_recorder=None, **kwargs):
     """One clip under one guidance setting, as ``(frames, prior_frames_or_None)``.
 
     Every guided setting runs the identical mechanism -- PhaseLock's equation (2) -- and
@@ -190,7 +199,8 @@ def generate(pipeline: PhaseLockPipeline, name: str, want_prior: bool, seed: int
         return frames, None
 
     pipeline.few_step_prior_type = name
-    result = pipeline(**kwargs, seed=seed, return_few_result=want_prior)
+    result = pipeline(**kwargs, seed=seed, return_few_result=want_prior,
+                      diagnostic_recorder=diagnostic_recorder)
     return result if want_prior else (result, None)
 
 
@@ -198,7 +208,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                         datefmt="%H:%M:%S")
     args = parse_args()
-    config = load(args.config, **parse_overrides(args.overrides))
+    overrides = parse_overrides(args.overrides)
+    if args.diagnostics is not None:
+        overrides["diagnostics__enabled"] = str(args.diagnostics).lower()
+    config = load(args.config, **overrides)
     set_seed(config.generation.seed)
 
     output = config.output.dir()
@@ -209,8 +222,13 @@ def main() -> None:
     samples = dataset.select_benchmark(
         categories=args.categories or config.data.categories,
         perspectives=args.perspectives,
-        limit=args.limit if args.limit is not None else config.data.limit,
+        limit=(None if args.sample_id else
+               (args.limit if args.limit is not None else config.data.limit)),
     )
+    if args.sample_id:
+        samples = [sample for sample in samples if sample.sample_id == args.sample_id]
+        if not samples:
+            raise SystemExit(f"Physics-IQ take-1 sample {args.sample_id!r} was not found")
     # A sample with no switch frame cannot be conditioned, and one with no continuation
     # cannot be scored; neither can contribute a row.
     usable = [s for s in samples if s.image_path and s.reference_path]
@@ -219,6 +237,8 @@ def main() -> None:
                     len(samples) - len(usable), len(samples))
     if not usable:
         raise SystemExit(f"no usable Physics-IQ samples under {dataset.root}")
+    if args.sample_id:
+        logger.info("selected sample %s: %s", usable[0].sample_id, usable[0].meta["scenario"])
 
     backend = load_backend(
         config.backend.name,
@@ -291,11 +311,23 @@ def main() -> None:
 
         for name in guidances:
             path = output / "videos" / settings[name] / video_name
+            diagnostic_enabled = (config.diagnostics.enabled
+                                  and config.phaselock.prior_mode == "running_momentum")
             if path.exists() and not args.overwrite:
-                continue
+                if name == "baseline" or not diagnostic_enabled:
+                    continue
 
+            diagnostic_trace = None
+            diagnostic_dir = (output / config.diagnostics.output_subdir / Path(video_name).stem / settings[name])
+            diagnostic_path = diagnostic_dir / "dashboard.mp4"
+            if (config.diagnostics.enabled and name != "baseline"
+                    and config.phaselock.prior_mode == "running_momentum"):
+                diagnostic_trace = MomentumTrace(name, save_raw=config.diagnostics.save_raw_tensors,
+                                             record_steps=(set(config.diagnostics.record_steps)
+                                                           if config.diagnostics.record_steps else None))
             frames, prior = generate(
                 pipeline, name, args.save_prior, config.generation.seed,
+                diagnostic_recorder=diagnostic_trace,
                 prompt=sample.prompt,
                 image=image,
                 num_frames=num_frames,
@@ -307,7 +339,22 @@ def main() -> None:
 
             # The evaluator-facing file: the pipeline's own frames, under the name the
             # Physics-IQ repo expects.
-            export_to_video(frames, str(path), fps=spec.default_fps)
+            if not path.exists() or args.overwrite or diagnostic_trace is not None:
+                export_to_video(frames, str(path), fps=spec.default_fps)
+            if diagnostic_trace is not None and diagnostic_trace.steps:
+                diagnostic_provenance = {
+                    "sample_id": sample.sample_id, "guidance": name,
+                    "backend": config.backend.name, "seed": config.generation.seed,
+                }
+                diagnostic_trace.save(diagnostic_dir, provenance=diagnostic_provenance)
+                render_dashboard(
+                    diagnostic_trace, diagnostic_path,
+                    decode=lambda latent: backend.decode(latent.to(backend.device)),
+                    fps=config.diagnostics.fps,
+                    preview_height=config.diagnostics.preview_height,
+                    temporal_ratio=spec.temporal_ratio,
+                    provenance=diagnostic_provenance,
+                )
             # The few-step generation is identical for every setting on a clip -- same
             # seed, same two steps, no guidance -- so it is written once, and to its own
             # directory. Alongside the others it would both duplicate 12 times and break
