@@ -184,6 +184,8 @@ class PhaseLockConfig:
     beta2: float = 0.999
     running_momentum_mode: str = "residual" # residual or snr
     """Which quantity the momentum guidance is built from."""
+    running_momentum_source: str = "latent"
+    """Frame differences of pre-step z_t or x0_hat(z_t, t), at the same timestep."""
 
     def __post_init__(self) -> None:
         from .guidance import SOURCES
@@ -194,6 +196,8 @@ class PhaseLockConfig:
                 f"unknown phaselock.few_step_prior_source {self.few_step_prior_source!r}; "
                 f"expected one of {sorted(SOURCES)}"
             )
+        if self.running_momentum_source not in {"latent", "x0_hat"}:
+            raise ValueError("phaselock.running_momentum_source must be 'latent' or 'x0_hat'")
         if self.few_step_prior_type not in OPERATORS:
             raise ValueError(
                 f"unknown phaselock.few_step_prior_type {self.few_step_prior_type!r}; "

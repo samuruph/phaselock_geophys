@@ -90,6 +90,8 @@ class PhaseLockPipeline:
         # Which tensor the operator is measured on. "latent" is the sampler state and is
         # PhaseLock's own; the others are model outputs and need `noise_pred`.
         self.source = source
+        if self.prior_mode == "running_momentum" and source not in {"latent", "x0_hat"}:
+            raise ValueError("running momentum source must be 'latent' or 'x0_hat'")
         self.last_prior_rms: float = float("nan")
 
     @property
@@ -129,6 +131,9 @@ class PhaseLockPipeline:
             "guidance_strength",
             "guide_start",
             "guide_end",
+            "source",
+            "betas",
+            "running_momentum_mode",
         }
         settings = {k: v for k, v in kwargs.items() if k in phaselock_keys}
         loader = {k: v for k, v in kwargs.items() if k not in phaselock_keys}
@@ -174,8 +179,11 @@ class PhaseLockPipeline:
 
         # Option A: running-momentum guidance, without freezed few-step guidance
         if self.prior_mode == "running_momentum":
-            prediction_capture = (StepPredictionCapture(self.backend, guidance_scale)
-                                  if diagnostic_recorder is not None else None)
+            prediction_capture = (
+                StepPredictionCapture(self.backend, guidance_scale)
+                if diagnostic_recorder is not None or self.source == "x0_hat"
+                else None
+            )
             guidance = RunningMomentumGuidance(
                 spec=spec,
                 guidance_strength=self.guidance_strength,
@@ -186,9 +194,11 @@ class PhaseLockPipeline:
                 recorder=diagnostic_recorder,
                 backend=self.backend,
                 prediction_capture=prediction_capture,
+                source=self.source,
             )
 
-            with prediction_capture or nullcontext():
+            capture_context = prediction_capture if prediction_capture is not None else nullcontext()
+            with capture_context:
                 final_result = self.pipe(
                     **shared,
                     num_inference_steps=self.full_steps,

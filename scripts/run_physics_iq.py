@@ -137,8 +137,8 @@ def parse_args() -> argparse.Namespace:
                         help="one control plus any frame operators; all run on the same "
                              "seed and clips, so every difference is paired")
     parser.add_argument("--source", default=None, choices=list(SOURCES),
-                        help="which tensor the prior is measured on; default from the "
-                             "config. latent is PhaseLock's own")
+                        help="frame-difference source: running momentum uses same-timestep "
+                             "post-step latent or current-step x0_hat; few-step mode also accepts velocity")
     parser.add_argument("--categories", type=_list,
                         help="comma-separated, from: Solid Mechanics, Fluid Dynamics, "
                              "Optics, Thermodynamics, Magnetism. Default is all five")
@@ -258,7 +258,11 @@ def main() -> None:
             f"backend only generates {num_frames}"
         )
 
-    source = args.source or config.phaselock.few_step_prior_source
+    running = config.phaselock.prior_mode == "running_momentum"
+    source = args.source or (config.phaselock.running_momentum_source if running
+                             else config.phaselock.few_step_prior_source)
+    if running and source not in {"latent", "x0_hat"}:
+        raise SystemExit("running momentum --source must be latent or x0_hat")
     pipeline = PhaseLockPipeline(
         backend,
         prior_mode=config.phaselock.prior_mode,
@@ -282,7 +286,10 @@ def main() -> None:
         config.backend.name, num_frames, spec.default_fps, score_frames,
         BENCHMARK_SECONDS,
     )
-    settings = {name: setting_name(name, source) for name in guidances}
+    # `latent` keeps its established post-step setting name; x0_hat is the
+    # prediction made from the pre-step input at t and gets an explicit suffix.
+    setting_source = "x0_hat_pred_at_t" if running and source == "x0_hat" else source
+    settings = {name: setting_name(name, setting_source) for name in guidances}
     for folder in settings.values():
         (output / "videos" / folder).mkdir(parents=True, exist_ok=True)
 
@@ -345,6 +352,10 @@ def main() -> None:
                 diagnostic_provenance = {
                     "sample_id": sample.sample_id, "guidance": name,
                     "backend": config.backend.name, "seed": config.generation.seed,
+                    "running_momentum_source": source,
+                    "source_state": ("post_scheduler_step_callback_latents" if source == "latent"
+                                     else "model_prediction_x0_hat_from_pre_step_latents_at_t"),
+                    "correction_target": "post_scheduler_step_latents",
                 }
                 diagnostic_trace.save(diagnostic_dir, provenance=diagnostic_provenance)
                 render_dashboard(
@@ -380,8 +391,11 @@ def main() -> None:
                 "guidance_strength": (0.0 if name == "baseline"
                                       else config.phaselock.guidance_strength),
                 "few_step_prior_type": "" if name == "baseline" else name,
-                "few_step_prior_source": ("" if name == "baseline"
-                                          else pipeline.source),
+                "few_step_prior_source": (pipeline.source if name != "baseline" and not running else ""),
+                "running_momentum_source": (pipeline.source if name != "baseline" and running else ""),
+                "momentum_source_timing": (("post_scheduler_step_callback_latents" if pipeline.source == "latent"
+                                            else "model_prediction_x0_hat_from_pre_step_latents_at_t")
+                                           if name != "baseline" and running else ""),
                 "prior_rms": (float("nan") if name == "baseline"
                               else pipeline.last_prior_rms),
                 "spatial_iou": scores.spatial_iou,

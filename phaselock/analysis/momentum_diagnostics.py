@@ -34,6 +34,14 @@ def _sqrt_m2_temporal_rms(m2: torch.Tensor) -> torch.Tensor:
     return m2.float().mean(dim=(1, 2, 3)).clamp_min(0).sqrt()
 
 
+def _mean_signal(step: "DiagnosticStep") -> torch.Tensor:
+    return step.m1 if step.mean is None else step.mean
+
+
+def _variance_signal(step: "DiagnosticStep") -> torch.Tensor:
+    return step.m2 if step.variance is None else step.variance
+
+
 @dataclass
 class DiagnosticStep:
     step: int
@@ -53,18 +61,31 @@ class DiagnosticStep:
 
     def summary(self) -> dict[str, Any]:
         applied = self.correction * self.strength
+        mean = self.m1 if self.mean is None else self.mean
+        variance = self.m2 if self.variance is None else self.variance
         return {
             "step": self.step,
             "timestep": self.timestep,
             "tau": self.tau,
             "lambda": self.strength,
-            "m1_rms": _rms(self.m1),
-            "m2_mean": float(self.m2.float().mean()),
-            "sqrt_m2_rms": float(self.m2.float().mean().clamp_min(0).sqrt()),
+            "current_rms": _rms(self.current),
+            "bias_corrected_mean_rms": _rms(mean),
+            "bias_corrected_variance_mean": float(variance.float().mean()),
+            "sqrt_bias_corrected_variance_rms": float(variance.float().mean().clamp_min(0).sqrt()),
+            "raw_m1_rms": _rms(self.m1),
+            "raw_m2_mean": float(self.m2.float().mean()),
+            # Compatibility aliases now report the bias-corrected signals shown in the dashboard.
+            "m1_rms": _rms(mean),
+            "m2_mean": float(variance.float().mean()),
+            "sqrt_m2_rms": float(variance.float().mean().clamp_min(0).sqrt()),
             "applied_guidance_rms": _rms(applied),
-            "m1_by_latent_transition": _temporal_rms(self.m1).tolist(),
-            "m2_mean_by_latent_transition": self.m2.float().mean(dim=(1, 2, 3)).tolist(),
-            "sqrt_m2_rms_by_latent_transition": _sqrt_m2_temporal_rms(self.m2).tolist(),
+            "current_by_latent_transition": _temporal_rms(self.current).tolist(),
+            "bias_corrected_mean_by_latent_transition": _temporal_rms(mean).tolist(),
+            "bias_corrected_variance_mean_by_latent_transition": variance.float().mean(dim=(1, 2, 3)).tolist(),
+            "sqrt_bias_corrected_variance_rms_by_latent_transition": _sqrt_m2_temporal_rms(variance).tolist(),
+            "m1_by_latent_transition": _temporal_rms(mean).tolist(),
+            "m2_mean_by_latent_transition": variance.float().mean(dim=(1, 2, 3)).tolist(),
+            "sqrt_m2_rms_by_latent_transition": _sqrt_m2_temporal_rms(variance).tolist(),
             "applied_guidance_by_latent_transition": _temporal_rms(applied).tolist(),
         }
 
@@ -116,10 +137,12 @@ def _magnitude_map(field: torch.Tensor) -> torch.Tensor:
 
 
 def _display_scales(trace: MomentumTrace) -> dict[str, float]:
-    grouped: dict[str, list[torch.Tensor]] = {"m1": [], "m2": [], "guidance": []}
+    grouped: dict[str, list[torch.Tensor]] = {
+        "current": [], "m1": [], "m2": [], "guidance": []}
     for step in trace.steps:
-        grouped["m1"].append(step.m1.float().square().mean(dim=1).sqrt().flatten())
-        grouped["m2"].append(step.m2.float().mean(dim=1).flatten())
+        grouped["current"].append(step.current.float().square().mean(dim=1).sqrt().flatten())
+        grouped["m1"].append(_mean_signal(step).float().square().mean(dim=1).sqrt().flatten())
+        grouped["m2"].append(_variance_signal(step).float().mean(dim=1).flatten())
         grouped["guidance"].append((step.correction.float() * step.strength)
                                     .square().mean(dim=1).sqrt().flatten())
     return {
@@ -234,6 +257,9 @@ def render_dashboard(
         raise ValueError("temporal_ratio must be positive")
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    source = (provenance or {}).get("running_momentum_source", "latent")
+    current_title = ("x0_hat delta at t" if source == "x0_hat"
+                     else "Post-step latent delta")
     expected_frames = 1 + temporal_ratio * (guided.steps[0].current.shape[0] + 1)
     videos: list[np.ndarray] = []
     panel_size = None
@@ -241,7 +267,8 @@ def render_dashboard(
         video, panel_size = _decode_clean(step.x0, decode, preview_height, expected_frames, panel_size)
         videos.append(video)
     panel_width, panel_height = panel_size
-    dashboard_width = panel_width * 4
+    panel_gutter = 4
+    dashboard_width = panel_width * 5 + panel_gutter * 4
     chart_height = max(170, preview_height)
     scales = _display_scales(guided)
     summaries = guided.summaries()
@@ -249,8 +276,11 @@ def render_dashboard(
     observed_strength_max = max((s.strength for s in guided.steps), default=0.)
     strength_max = observed_strength_max if observed_strength_max > 0 else 1.
     magnitudes = [
-        ("m1 RMS", np.asarray([_rms(s.m1) for s in guided.steps]), (90, 215, 255)),
-        ("sqrt(m2) RMS", np.asarray([s.summary()["sqrt_m2_rms"] for s in guided.steps]), (255, 190, 90)),
+        ("current delta RMS", np.asarray([_rms(s.current) for s in guided.steps]), (215, 155, 100)),
+        ("bias-corrected mean RMS", np.asarray([_rms(_mean_signal(s)) for s in guided.steps]), (90, 215, 255)),
+        ("sqrt(bias-corrected variance) RMS", np.asarray([
+            _rms(_variance_signal(s).float().clamp_min(0).sqrt()) for s in guided.steps
+        ]), (255, 190, 90)),
         ("applied guidance RMS", np.asarray([_rms(s.correction*s.strength)
                                                for s in guided.steps]), (105, 230, 135)),
     ]
@@ -258,13 +288,15 @@ def render_dashboard(
     tau_range = (0., 1.)
     colors = {name: color for name, _, color in magnitudes}
     moment_denoise_max = max(
-        max((_rms(s.m1) for s in guided.steps), default=0.),
-        max((s.summary()["sqrt_m2_rms"] for s in guided.steps), default=0.), _EPS)
+        max((_rms(s.current) for s in guided.steps), default=0.),
+        max((_rms(_mean_signal(s)) for s in guided.steps), default=0.),
+        max((_rms(_variance_signal(s).float().clamp_min(0).sqrt()) for s in guided.steps), default=0.), _EPS)
     guidance_denoise_max = max((float(v) for name, values, _color in magnitudes
                                 if name == "applied guidance RMS" for v in values), default=_EPS)
     moment_time_max = max(
-        max((float(_temporal_rms(s.m1).max()) for s in guided.steps), default=0.),
-        max((float(_sqrt_m2_temporal_rms(s.m2).max()) for s in guided.steps), default=0.), _EPS)
+        max((float(_temporal_rms(s.current).max()) for s in guided.steps), default=0.),
+        max((float(_temporal_rms(_mean_signal(s)).max()) for s in guided.steps), default=0.),
+        max((float(_sqrt_m2_temporal_rms(_variance_signal(s)).max()) for s in guided.steps), default=0.), _EPS)
     guidance_time_max = max((float(_temporal_rms(s.correction*s.strength).max())
                              for s in guided.steps), default=_EPS)
 
@@ -274,17 +306,21 @@ def render_dashboard(
             frame_count = len(video)
             frame_x = np.arange(frame_count, dtype=np.float64)
             time_values = {name: np.full(frame_count, np.nan) for name in colors}
-            m1_profile = _temporal_rms(step.m1).numpy()
-            m2_profile = _sqrt_m2_temporal_rms(step.m2).numpy()
+            current_profile = _temporal_rms(step.current).numpy()
+            mean_signal = _mean_signal(step)
+            variance_signal = _variance_signal(step)
+            m1_profile = _temporal_rms(mean_signal).numpy()
+            m2_profile = _sqrt_m2_temporal_rms(variance_signal).numpy()
             guidance_profile = _temporal_rms(step.correction*step.strength).numpy()
             for frame in range(1, frame_count):
                 transition = _video_to_transition(frame, temporal_ratio, len(m1_profile))
-                time_values["m1 RMS"][frame] = m1_profile[transition]
-                time_values["sqrt(m2) RMS"][frame] = m2_profile[transition]
+                time_values["current delta RMS"][frame] = current_profile[transition]
+                time_values["bias-corrected mean RMS"][frame] = m1_profile[transition]
+                time_values["sqrt(bias-corrected variance) RMS"][frame] = m2_profile[transition]
                 time_values["applied guidance RMS"][frame] = guidance_profile[transition]
             temporal_series = [(name, time_values[name], colors[name]) for name in colors]
-            denoise_moments = magnitudes[:2]
-            denoise_guidance = [magnitudes[2]]
+            denoise_moments = magnitudes[:3]
+            denoise_guidance = [magnitudes[3]]
             plot_widths = [dashboard_width//3, dashboard_width//3,
                            dashboard_width - 2*(dashboard_width//3)]
             diffusion_moments_plot = _chart(
@@ -301,16 +337,17 @@ def render_dashboard(
                 "tau: noise -> clean", tau_range, fixed_y_max=strength_max)
             def compose(frame_index: int) -> np.ndarray:
                 clean = video[frame_index]
-                transition = _video_to_transition(frame_index, temporal_ratio, step.m1.shape[0])
+                transition = _video_to_transition(frame_index, temporal_ratio, mean_signal.shape[0])
                 if transition is None:
-                    m1_image = m2_image = guidance_image = np.zeros_like(clean)
+                    current_image = m1_image = m2_image = guidance_image = np.zeros_like(clean)
                     transition_text = "anchor frame; no prior transition"
                 else:
-                    m1_image = _map(step.m1[transition], scales["m1"], panel_size)
-                    m2_image = _map(step.m2[transition], scales["m2"], panel_size, m2=True)
+                    current_image = _map(step.current[transition], scales["current"], panel_size)
+                    m1_image = _map(mean_signal[transition], scales["m1"], panel_size)
+                    m2_image = _map(variance_signal[transition], scales["m2"], panel_size, m2=True)
                     guidance_image = _map(step.correction[transition]*step.strength,
                                           scales["guidance"], panel_size)
-                    transition_text = f"latent transition {transition+1}/{step.m1.shape[0]}"
+                    transition_text = f"latent transition {transition+1}/{mean_signal.shape[0]}"
                 header = np.full((40, dashboard_width, 3), 18, np.uint8)
                 title = (f"Denoising step index {step.step} | t={step.timestep:.0f}"
                          f" | tau={step.tau:.3f} | lambda={step.strength:.3g}"
@@ -319,20 +356,27 @@ def render_dashboard(
                             (250, 250, 250), 1, cv2.LINE_AA)
                 panels = [
                     _caption(clean, "Predicted clean video"),
-                    _caption(m1_image, "m1 magnitude (latent RMS)"),
-                    _caption(m2_image, "m2 second moment"),
-                    _caption(guidance_image, "Applied guidance magnitude"),
+                    _caption(current_image, f"{current_title} | RMS"),
+                    _caption(m1_image, "Bias-corrected mean | RMS"),
+                    _caption(m2_image, "Bias-corrected variance"),
+                    _caption(guidance_image, "Applied guidance | RMS"),
                 ]
-                image_row = np.concatenate(panels, axis=1)
+                gutter = np.zeros((panels[0].shape[0], panel_gutter, 3), np.uint8)
+                pieces = []
+                for index, panel in enumerate(panels):
+                    if index:
+                        pieces.append(gutter)
+                    pieces.append(panel)
+                image_row = np.concatenate(pieces, axis=1)
                 lower = np.concatenate((diffusion_moments_plot,
                                         diffusion_guidance_plot, schedule_plot), axis=1)
                 temporal_moments_plot = _chart(
-                    temporal_series[:2], "Moments | video time",
+                temporal_series[:3], "Current delta and corrected moments | video time",
                     dashboard_width//2, chart_height, frame_x, float(frame_index),
                     "decoded video frame", (0., float(max(frame_count-1, 1))),
                     fixed_y_max=moment_time_max)
                 temporal_guidance_plot = _chart(
-                    [temporal_series[2]], "Applied guidance | video time",
+                    [temporal_series[3]], "Applied guidance | video time",
                     dashboard_width-dashboard_width//2, chart_height, frame_x, float(frame_index),
                     "decoded video frame", (0., float(max(frame_count-1, 1))),
                     fixed_y_max=guidance_time_max)
@@ -368,8 +412,12 @@ def render_dashboard(
             "spatial_rule": "each latent map is resized to the decoded video frame dimensions without changing its aspect ratio",
         },
         "signal_definitions": {
-            "m1": "stored running first moment (before bias correction), visualized as per-pixel RMS across latent channels",
-            "m2": "stored running second moment, visualized as per-pixel channel mean; plot uses sqrt(m2) for latent units",
+            "current_delta": ("adjacent-frame difference of x0_hat(z_t, t) from the current model prediction"
+                              if source == "x0_hat" else
+                              "adjacent-frame difference of callback latents after the scheduler update")
+                             + "; panel and chart show RMS across latent channels",
+            "m1": "bias-corrected running mean used by the controller, visualized as per-pixel RMS across latent channels; raw_m1 is also included in each step summary",
+            "m2": "bias-corrected running variance used by the controller, visualized as per-pixel channel mean; plot uses sqrt(variance) in latent units; raw_m2 is also included in each step summary",
             "applied_guidance": "schedule strength lambda multiplied by the controller correction, visualized as per-pixel RMS across latent channels",
             "diffusion_time": "tau = 0 at noise and tau = 1 at clean data",
         },

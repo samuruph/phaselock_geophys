@@ -299,6 +299,7 @@ class RunningMomentumGuidance:
         recorder: Any = None,
         backend: Any = None,
         prediction_capture: Any = None,
+        source: str = "latent",
     ):
         if mode not in {"residual", "snr"}:
             raise ValueError(
@@ -308,6 +309,8 @@ class RunningMomentumGuidance:
 
         if guide_end <= guide_start:
             raise ValueError("guide_end must be greater than guide_start")
+        if source not in {"latent", "x0_hat"}:
+            raise ValueError("running momentum source must be 'latent' or 'x0_hat'")
 
         self.spec = spec
         self.guidance_strength = guidance_strength
@@ -320,12 +323,12 @@ class RunningMomentumGuidance:
         self.recorder = recorder
         self.backend = backend
         self.prediction_capture = prediction_capture
+        self.source = source
 
         self.m1 = None
         self.m2 = None
         self.mean = None
         self.variance = None
-        self._previous_latents = None
         self.step = 0
 
     def compute_schedule(self, step_index: int) -> float:
@@ -389,12 +392,19 @@ class RunningMomentumGuidance:
         if latents is None:
             return callback_kwargs
 
-        previous_latents = self._previous_latents
-        self._previous_latents = latents.detach()
         canonical = to_canonical(latents, self.spec)
-
-        # Frame-wise latent motion. Frame zero remains the conditioning anchor.
-        current = canonical[1:] - canonical[:-1]
+        # Preserve the original latent mode: callback latents are post-scheduler.
+        # x0_hat is only available from the model prediction made at the current t.
+        state = self.prediction_capture.consume(timestep) if self.prediction_capture else None
+        if self.source == "latent":
+            source_state = canonical
+        else:
+            if state is None:
+                raise RuntimeError("x0_hat running momentum requires a prediction captured at every denoising step")
+            source_state = state.x0
+            if source_state.shape != canonical.shape:
+                raise ValueError(f"captured x0_hat shape {source_state.shape} does not match callback latents {canonical.shape}")
+        current = source_state[1:] - source_state[:-1]
 
         correction = self._update_momentum(current)
         strength = self.compute_schedule(step_index)
@@ -407,17 +417,13 @@ class RunningMomentumGuidance:
             )
 
         if self.recorder is not None:
-            x0 = flow = None
-            noise_pred = callback_kwargs.get("noise_pred")
-            state = self.prediction_capture.consume(timestep) if self.prediction_capture else None
-            if state is None and noise_pred is not None and self.backend is not None and previous_latents is not None:
-                state = self.backend.denoiser_state(previous_latents, noise_pred, timestep)
-            x0, flow, tau = ((state.x0, state.drift, state.tau)
-                             if state is not None else (None, None, 0.0))
+            if state is None:
+                raise RuntimeError("diagnostic recording requires a prediction captured at every denoising step")
             self.recorder.capture(
-                step=step_index, timestep=timestep, tau=tau, current=current,
+                step=step_index, timestep=timestep, tau=state.tau, current=current,
                 m1=self.m1, m2=self.m2, mean=self.mean, variance=self.variance,
-                correction=correction, strength=strength, x0=x0, latents_before=canonical, latents_after=guided, flow=flow,
+                correction=correction, strength=strength, x0=state.x0,
+                latents_before=canonical, latents_after=guided, flow=state.drift,
             )
 
         return callback_kwargs

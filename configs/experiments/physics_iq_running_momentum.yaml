@@ -34,6 +34,7 @@ phaselock:
   beta1: 0.9
   beta2: 0.999
   running_momentum_mode: residual # residual or snr
+  running_momentum_source: latent # latent uses post-step callback state; x0_hat is the prediction at t
 
 output:
   root: /data/experiments/phaselock_running_momentum

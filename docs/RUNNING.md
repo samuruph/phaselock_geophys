@@ -216,15 +216,26 @@ python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running
     diagnostics__record_steps=0,5,10,20,30,40,49
 ```
 
+Choose the motion source with `--source latent` or `--source x0_hat`, or set
+`phaselock.running_momentum_source` in YAML. `latent` preserves the established
+behavior: the frame difference is measured from callback latents after the
+scheduler update. `x0_hat` uses the model's clean prediction `x0_hat(z_t, t)`
+from the current step, before that update. In both modes the correction is added
+to the callback's post-step latents, and no extra denoiser pass is made. The
+dashboard labels the current-motion panel with the selected source and its timing.
+The latent setting remains `videos/motion_on_latent/`; x0 prediction runs use
+`videos/motion_on_x0_hat_pred_at_t/`. To compare sources, use the same seed and
+sample ID.
+
 Diagnostics are grouped under `diagnostics/<video-stem>/<setting>/`. That folder contains
 one `dashboard.mp4` joining the selected denoising steps, one full temporal movie per
 selected step in `steps/`, and `dashboard.json` with moment summaries and alignment metadata.
-Each movie plays the predicted clean video beside spatial maps of the stored `m1`, stored
-`m2`, and schedule-scaled guidance actually applied. The bottom plots show those signals
+Each movie plays the predicted clean video beside spatial maps of the selected-source
+frame difference, bias-corrected mean, bias-corrected variance, and schedule-scaled guidance actually applied. These corrected moments are the values used to compute guidance; raw `m1` and `m2` are retained in summaries and optional raw traces. The bottom plots show those signals
 across normalized diffusion time and across decoded video frames. Latent maps are held over
 the decoded frames belonging to each latent transition, and are resized to the decoded
 frame dimensions without stretching the source aspect ratio. The maps use fixed run-level
-99th-percentile scales. `m1` and `m2` are displayed as channel-pooled magnitudes; guidance
+99th-percentile scales. The latent difference, corrected mean, and guidance maps show RMS over channels; corrected variance shows its channel mean. Guidance
 is displayed as the RMS magnitude of `lambda * correction`. `m2` stays a latent statistic
 and is not decoded as RGB. Frame zero is the conditioning anchor and has no latent transition.
 Use `diagnostics__save_raw_tensors=true` only when you need the full latent tensors later.
