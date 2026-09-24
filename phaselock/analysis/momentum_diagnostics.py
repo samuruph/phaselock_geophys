@@ -152,14 +152,13 @@ def _display_scales(trace: MomentumTrace) -> dict[str, float]:
 
 
 def _map(
-    field: torch.Tensor, scale: float, size: tuple[int, int], *,
-    m2: bool = False, colormap: int = cv2.COLORMAP_VIRIDIS,
+    field: torch.Tensor, scale: float, size: tuple[int, int], *, m2: bool = False,
 ) -> np.ndarray:
     values = field.float().mean(dim=0) if m2 else _magnitude_map(field)
     normalized = np.clip(values.numpy() / max(scale, _EPS), 0, 1)
     if m2:
         normalized = np.log1p(9 * normalized) / np.log(10)
-    bgr = cv2.applyColorMap((normalized * 255).astype(np.uint8), colormap)
+    bgr = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
     return cv2.cvtColor(cv2.resize(bgr, size, interpolation=cv2.INTER_LINEAR), cv2.COLOR_BGR2RGB)
 
 
@@ -296,10 +295,15 @@ def render_dashboard(
         max((_rms(_variance_signal(s).float().clamp_min(0).sqrt()) for s in guided.steps), default=0.), _EPS)
     guidance_denoise_max = max((float(v) for name, values, _color in magnitudes
                                 if name == "Applied guide" for v in values), default=_EPS)
-    moment_time_max = max(
-        max((float(_temporal_rms(s.current).max()) for s in guided.steps), default=0.),
-        max((float(_temporal_rms(_mean_signal(s)).max()) for s in guided.steps), default=0.),
-        max((float(_sqrt_m2_temporal_rms(_variance_signal(s)).max()) for s in guided.steps), default=0.), _EPS)
+    video_time_scales = {
+        step.step: max(
+            float(_temporal_rms(step.current).max()),
+            float(_temporal_rms(_mean_signal(step)).max()),
+            float(_sqrt_m2_temporal_rms(_variance_signal(step)).max()),
+            _EPS,
+        )
+        for step in guided.steps
+    }
     guidance_time_max = max((float(_temporal_rms(s.correction*s.strength).max())
                              for s in guided.steps), default=_EPS)
 
@@ -345,11 +349,9 @@ def render_dashboard(
                     current_image = m1_image = m2_image = guidance_image = np.zeros_like(clean)
                     transition_text = "anchor frame; no prior transition"
                 else:
-                    current_image = _map(step.current[transition], scales["current"], panel_size,
-                                         colormap=cv2.COLORMAP_OCEAN)
+                    current_image = _map(step.current[transition], scales["current"], panel_size)
                     m1_image = _map(mean_signal[transition], scales["m1"], panel_size)
-                    m2_image = _map(variance_signal[transition], scales["m2"], panel_size,
-                                    m2=True, colormap=cv2.COLORMAP_MAGMA)
+                    m2_image = _map(variance_signal[transition], scales["m2"], panel_size, m2=True)
                     guidance_image = _map(step.correction[transition]*step.strength,
                                           scales["guidance"], panel_size)
                     transition_text = f"latent transition {transition+1}/{mean_signal.shape[0]}"
@@ -376,10 +378,10 @@ def render_dashboard(
                 lower = np.concatenate((diffusion_moments_plot,
                                         diffusion_guidance_plot, schedule_plot), axis=1)
                 temporal_moments_plot = _chart(
-                temporal_series[:3], "Current delta and corrected moments | video time",
+                    temporal_series[:3], "Current delta and corrected moments | video time",
                     dashboard_width//2, chart_height, frame_x, float(frame_index),
                     "decoded video frame", (0., float(max(frame_count-1, 1))),
-                    fixed_y_max=moment_time_max)
+                    fixed_y_max=video_time_scales[step.step])
                 temporal_guidance_plot = _chart(
                     [temporal_series[3]], "Applied guidance | video time",
                     dashboard_width-dashboard_width//2, chart_height, frame_x, float(frame_index),
@@ -427,6 +429,10 @@ def render_dashboard(
             "diffusion_time": "tau = 0 at noise and tau = 1 at clean data",
         },
         "display_scales_p99": scales,
+        "video_time_plot_scale_by_step": {
+            str(step): {"y_max": scale, "shared_by": ["current_delta", "corrected_mean", "sqrt_corrected_variance"]}
+            for step, scale in video_time_scales.items()
+        },
         "steps": summaries,
         "step_videos": [f"steps/step_{s.step:03d}.mp4" for s in guided.steps],
         "dashboard_video": out.name,
