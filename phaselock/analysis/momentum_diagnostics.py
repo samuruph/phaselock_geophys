@@ -151,12 +151,15 @@ def _display_scales(trace: MomentumTrace) -> dict[str, float]:
     }
 
 
-def _map(field: torch.Tensor, scale: float, size: tuple[int, int], *, m2: bool = False) -> np.ndarray:
+def _map(
+    field: torch.Tensor, scale: float, size: tuple[int, int], *,
+    m2: bool = False, colormap: int = cv2.COLORMAP_VIRIDIS,
+) -> np.ndarray:
     values = field.float().mean(dim=0) if m2 else _magnitude_map(field)
     normalized = np.clip(values.numpy() / max(scale, _EPS), 0, 1)
     if m2:
         normalized = np.log1p(9 * normalized) / np.log(10)
-    bgr = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
+    bgr = cv2.applyColorMap((normalized * 255).astype(np.uint8), colormap)
     return cv2.cvtColor(cv2.resize(bgr, size, interpolation=cv2.INTER_LINEAR), cv2.COLOR_BGR2RGB)
 
 
@@ -276,13 +279,13 @@ def render_dashboard(
     observed_strength_max = max((s.strength for s in guided.steps), default=0.)
     strength_max = observed_strength_max if observed_strength_max > 0 else 1.
     magnitudes = [
-        ("current delta RMS", np.asarray([_rms(s.current) for s in guided.steps]), (215, 155, 100)),
-        ("bias-corrected mean RMS", np.asarray([_rms(_mean_signal(s)) for s in guided.steps]), (90, 215, 255)),
-        ("sqrt(bias-corrected variance) RMS", np.asarray([
+        ("Current delta", np.asarray([_rms(s.current) for s in guided.steps]), (0, 165, 255)),
+        ("Corrected mean", np.asarray([_rms(_mean_signal(s)) for s in guided.steps]), (255, 255, 0)),
+        ("sqrt(var)", np.asarray([
             _rms(_variance_signal(s).float().clamp_min(0).sqrt()) for s in guided.steps
-        ]), (255, 190, 90)),
-        ("applied guidance RMS", np.asarray([_rms(s.correction*s.strength)
-                                               for s in guided.steps]), (105, 230, 135)),
+        ]), (180, 80, 220)),
+        ("Applied guide", np.asarray([_rms(s.correction*s.strength)
+                                      for s in guided.steps]), (80, 210, 100)),
     ]
     schedule = [("lambda", np.asarray([s.strength for s in guided.steps]), (100, 190, 255))]
     tau_range = (0., 1.)
@@ -292,7 +295,7 @@ def render_dashboard(
         max((_rms(_mean_signal(s)) for s in guided.steps), default=0.),
         max((_rms(_variance_signal(s).float().clamp_min(0).sqrt()) for s in guided.steps), default=0.), _EPS)
     guidance_denoise_max = max((float(v) for name, values, _color in magnitudes
-                                if name == "applied guidance RMS" for v in values), default=_EPS)
+                                if name == "Applied guide" for v in values), default=_EPS)
     moment_time_max = max(
         max((float(_temporal_rms(s.current).max()) for s in guided.steps), default=0.),
         max((float(_temporal_rms(_mean_signal(s)).max()) for s in guided.steps), default=0.),
@@ -314,10 +317,10 @@ def render_dashboard(
             guidance_profile = _temporal_rms(step.correction*step.strength).numpy()
             for frame in range(1, frame_count):
                 transition = _video_to_transition(frame, temporal_ratio, len(m1_profile))
-                time_values["current delta RMS"][frame] = current_profile[transition]
-                time_values["bias-corrected mean RMS"][frame] = m1_profile[transition]
-                time_values["sqrt(bias-corrected variance) RMS"][frame] = m2_profile[transition]
-                time_values["applied guidance RMS"][frame] = guidance_profile[transition]
+                time_values["Current delta"][frame] = current_profile[transition]
+                time_values["Corrected mean"][frame] = m1_profile[transition]
+                time_values["sqrt(var)"][frame] = m2_profile[transition]
+                time_values["Applied guide"][frame] = guidance_profile[transition]
             temporal_series = [(name, time_values[name], colors[name]) for name in colors]
             denoise_moments = magnitudes[:3]
             denoise_guidance = [magnitudes[3]]
@@ -342,9 +345,11 @@ def render_dashboard(
                     current_image = m1_image = m2_image = guidance_image = np.zeros_like(clean)
                     transition_text = "anchor frame; no prior transition"
                 else:
-                    current_image = _map(step.current[transition], scales["current"], panel_size)
+                    current_image = _map(step.current[transition], scales["current"], panel_size,
+                                         colormap=cv2.COLORMAP_OCEAN)
                     m1_image = _map(mean_signal[transition], scales["m1"], panel_size)
-                    m2_image = _map(variance_signal[transition], scales["m2"], panel_size, m2=True)
+                    m2_image = _map(variance_signal[transition], scales["m2"], panel_size,
+                                    m2=True, colormap=cv2.COLORMAP_MAGMA)
                     guidance_image = _map(step.correction[transition]*step.strength,
                                           scales["guidance"], panel_size)
                     transition_text = f"latent transition {transition+1}/{mean_signal.shape[0]}"
@@ -358,7 +363,7 @@ def render_dashboard(
                     _caption(clean, "Predicted clean video"),
                     _caption(current_image, f"{current_title} | RMS"),
                     _caption(m1_image, "Bias-corrected mean | RMS"),
-                    _caption(m2_image, "Bias-corrected variance"),
+                    _caption(m2_image, "Corrected variance"),
                     _caption(guidance_image, "Applied guidance | RMS"),
                 ]
                 gutter = np.zeros((panels[0].shape[0], panel_gutter, 3), np.uint8)
