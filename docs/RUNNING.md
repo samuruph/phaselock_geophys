@@ -256,12 +256,15 @@ Use `diagnostics__save_raw_tensors=true` only when you need the full latent tens
 | `inversion` | `num_steps`, `prompt` | integration steps; prompt is empty by default |
 | | `reconstruction_check` | invert one clip, resample, report PSNR to `reconstruction.json` |
 | `metrics` | `ar_order`, `residual_fit`, `ridge_lambda`, `bootstrap_resamples` | statistic options |
-| `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed` | sampling |
+| `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed`, `negative_prompt` | sampling |
 | `diagnostics` | `enabled`, `record_steps`, `save_raw_tensors`, `fps`, `preview_height`, `output_subdir` | opt-in moment and applied-guidance dashboard, with one replayable movie per selected denoising step |
 | `phaselock` | `few_steps`, `guidance_strength`, `guide_start`, `guide_end` | Latent Delta Guidance, at the paper's defaults. `guide_end: null` resolves to half of `generation.num_steps` |
+| | `prior_mode` | `few_step` uses the original two-step prior; `running_momentum` builds a moving reference from each denoising step |
 | | `few_step_prior_source` | which tensor the prior is measured on: `latent` (the sampler state, PhaseLock's own), `x0_hat` or `velocity` |
 | | `few_step_prior_type` | which quantity the few-step prior is built from and the full pass is held to: `motion` (PhaseLock's own first difference), `accel`, `jerk` or `perr` |
-| | `negative_prompt` | passed through to the pipeline; `null` by default |
+| | `running_momentum_source`, `running_momentum_mode` | source: `latent`, `x0_hat`, or `blend`; mode: `residual` or `snr` |
+| | `beta1`, `beta2`, `velocity_decay` | first- and second-moment EMA coefficients and extra first-moment decay; the first moment is normalized by its actual accumulated observation weight |
+| | `variance_floor_fraction`, `max_update_ratio` | lower bound on the adaptive denominator relative to motion RMS, and upper bound on applied guidance RMS relative to latent RMS; both default to 0.1 |
 | `output` | `root`, `run_id`, `name` | artefacts land in `{root}/{run_id}/{backend}/{dataset}/{name}/` |
 | | `backend` / `dataset` | filled in automatically from `backend.name` and `data.name`; set by hand only to file a run elsewhere |
 

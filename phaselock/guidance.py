@@ -296,6 +296,8 @@ class RunningMomentumGuidance:
         betas: tuple[float, float] = (0.9, 0.999),
         velocity_decay: float = 0.01,
         epsilon: float = 1e-8,
+        variance_floor_fraction: float = 0.1,
+        max_update_ratio: float = 0.1,
         recorder: Any = None,
         backend: Any = None,
         prediction_capture: Any = None,
@@ -311,6 +313,12 @@ class RunningMomentumGuidance:
             raise ValueError("guide_end must be greater than guide_start")
         if source not in {"latent", "x0_hat", "blend"}:
             raise ValueError("running momentum source must be 'latent', 'x0_hat', or 'blend'")
+        if any(not 0.0 <= beta < 1.0 for beta in betas):
+            raise ValueError("momentum betas must be in [0, 1)")
+        if not 0.0 <= velocity_decay < 1.0:
+            raise ValueError("velocity_decay must be in [0, 1)")
+        if epsilon <= 0 or variance_floor_fraction < 0 or max_update_ratio < 0:
+            raise ValueError("epsilon must be positive and momentum bounds non-negative")
 
         self.spec = spec
         self.guidance_strength = guidance_strength
@@ -320,6 +328,8 @@ class RunningMomentumGuidance:
         self.beta1, self.beta2 = betas
         self.velocity_decay = velocity_decay
         self.epsilon = epsilon
+        self.variance_floor_fraction = variance_floor_fraction
+        self.max_update_ratio = max_update_ratio
         self.recorder = recorder
         self.backend = backend
         self.prediction_capture = prediction_capture
@@ -330,6 +340,7 @@ class RunningMomentumGuidance:
         self.mean = None
         self.variance = None
         self.step = 0
+        self.m1_weight = 0.0
 
     def compute_schedule(self, step_index: int) -> float:
         """``lambda(k) = lambda_0 * (1 - (k - k_start) / (k_end - k_start))``.
@@ -354,38 +365,38 @@ class RunningMomentumGuidance:
         return u * u * (3.0 - 2.0 * u)
 
     def _update_momentum(self, current: torch.Tensor) -> torch.Tensor:
+        # Keep the moments in float32: squaring small bfloat16/float16 residuals can
+        # underflow, making the adaptive denominator spuriously close to zero.
+        current = current.float()
         if self.m1 is None:
             self.m1 = torch.zeros_like(current)
             self.m2 = torch.zeros_like(current)
 
         self.step += 1
-
-        difference = current - self.m1
-
-        self.m1 = (1.0 - self.velocity_decay) * self.m1
-        self.m1 = (
-            self.beta1 * self.m1
-            + (1.0 - self.beta1) * current
-        )
-        self.m2 = (
-            self.beta2 * self.m2
-            + (1.0 - self.beta2) * difference.square()
-        )
-
-        bias_correction_1 = 1.0 - self.beta1 ** self.step
-        bias_correction_2 = 1.0 - self.beta2 ** self.step
-
-        mean = self.m1 / bias_correction_1
-        variance = self.m2 / bias_correction_2
+        decay = self.beta1 * (1.0 - self.velocity_decay)
+        self.m1 = decay * self.m1 + (1.0 - self.beta1) * current
+        # Track the weight of the observations under the *actual* recurrence. Dividing
+        # by 1-beta1**step is only correct when velocity_decay is zero.
+        self.m1_weight = decay * self.m1_weight + (1.0 - self.beta1)
+        mean = self.m1 / self.m1_weight
+        residual = mean - current
+        # The denominator must measure the same residual used by the controller.
+        self.m2 = self.beta2 * self.m2 + (1.0 - self.beta2) * residual.square()
+        variance = self.m2 / (1.0 - self.beta2 ** self.step)
         self.mean = mean
         self.variance = variance
 
+        # A per-element variance can be nearly zero even when the rest of the latent
+        # has ordinary scale. A global floor prevents isolated elements from exploding.
+        floor = torch.maximum(
+            current.square().mean().sqrt() * self.variance_floor_fraction,
+            current.new_tensor(self.epsilon),
+        )
+        denominator = torch.sqrt(variance).clamp_min(floor)
         if self.mode == "residual":
-            correction = (mean - current) / (
-                torch.sqrt(variance) + self.epsilon
-            )
+            correction = residual / denominator
         elif self.mode == "snr":
-            correction = mean / (torch.sqrt(variance) + self.epsilon)
+            correction = mean / denominator
 
         return correction
 
@@ -424,7 +435,12 @@ class RunningMomentumGuidance:
         strength = self.compute_schedule(step_index)
         guided = canonical.clone()
         if strength != 0.0:
-            guided[1:] = canonical[1:] + strength * correction
+            update = strength * correction
+            update_rms = update.square().mean().sqrt()
+            max_rms = self.max_update_ratio * canonical.float().square().mean().sqrt()
+            correction = correction * (max_rms / update_rms.clamp_min(self.epsilon)).clamp(max=1.0)
+            update = strength * correction
+            guided[1:] = canonical[1:] + update.to(canonical.dtype)
             callback_kwargs["latents"] = (
                 from_canonical(guided, self.spec)
                 .to(latents.dtype)
