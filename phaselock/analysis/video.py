@@ -211,6 +211,26 @@ def encode_frames(frames, path: Path, fps: int) -> None:
     looked at. imageio-ffmpeg ships a static ffmpeg binary, so H.264 needs no system
     package.
     """
+    # yuv420p requires even width and height.  Prompt bars and annotation strips can
+    # turn an otherwise even model frame into an odd-sized video (for example 480 +
+    # 125 = 605), so pad only the bottom/right edge when necessary.  Edge padding does
+    # not alter the rendered content and keeps every caller safe, including generators
+    # that produce frames lazily.
+    iterator = iter(frames)
+    try:
+        first = next(iterator)
+    except StopIteration:
+        raise ValueError(f"no frames to write to {path}") from None
+
+    def even_frame(frame):
+        height, width = frame.shape[:2]
+        pad_height, pad_width = height % 2, width % 2
+        if not pad_height and not pad_width:
+            return frame
+        return np.pad(frame, ((0, pad_height), (0, pad_width), (0, 0)), mode="edge")
+
+    first = even_frame(first)
+
     try:
         import imageio.v2 as imageio
     except ImportError:  # pragma: no cover - exercised only where ffmpeg is absent
@@ -223,23 +243,24 @@ def encode_frames(frames, path: Path, fps: int) -> None:
             macro_block_size=1,  # dimensions are already even; do not pad them again
         )
         try:
-            for frame in frames:
-                writer.append_data(frame)
+            writer.append_data(first)
+            for frame in iterator:
+                writer.append_data(even_frame(frame))
         finally:
             writer.close()
         return
 
     writer = None  # pragma: no cover - fallback path
     try:
-        for frame in frames:
-            if writer is None:
-                writer = cv2.VideoWriter(
-                    str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
-                    (frame.shape[1], frame.shape[0]),
-                )
-                if not writer.isOpened():
-                    raise RuntimeError(f"could not open a writer for {path}")
-            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
+            (first.shape[1], first.shape[0]),
+        )
+        if not writer.isOpened():
+            raise RuntimeError(f"could not open a writer for {path}")
+        writer.write(cv2.cvtColor(first, cv2.COLOR_RGB2BGR))
+        for frame in iterator:
+            writer.write(cv2.cvtColor(even_frame(frame), cv2.COLOR_RGB2BGR))
     finally:
         if writer is not None:
             writer.release()

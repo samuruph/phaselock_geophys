@@ -355,7 +355,7 @@ def main() -> None:
             # Physics-IQ repo expects.
             if not path.exists() or args.overwrite or diagnostic_trace is not None:
                 # Keep the evaluator's exact filename and pixels; write a sibling for viewing.
-                prompted_video(torch.as_tensor(frames).permute(0, 3, 1, 2).float() / 255.0,
+                prompted_video(frames_to_tensor(frames),
                                path.with_name(f"{path.stem}_prompted{path.suffix}"),
                                sample.prompt, fps=spec.default_fps)
             if diagnostic_trace is not None and diagnostic_trace.steps:
@@ -386,7 +386,7 @@ def main() -> None:
                 few_path = output / "videos" / "few_step" / video_name
                 if not few_path.exists() or args.overwrite:
                     few_path.parent.mkdir(parents=True, exist_ok=True)
-                    prompted_video(torch.as_tensor(prior).permute(0, 3, 1, 2).float() / 255.0,
+                    prompted_video(frames_to_tensor(prior),
                                    few_path, sample.prompt, fps=spec.default_fps)
 
             # The full clip goes to disk -- the official evaluator does its own trim --
