@@ -66,10 +66,11 @@ from phaselock.runtime import prepare
 prepare()
 
 import torch
-from diffusers.utils import export_to_video, load_image
+from diffusers.utils import load_image
 
 from phaselock import load, set_seed
 from phaselock.backends import load_backend
+from phaselock.analysis.video import prompted_video
 from phaselock.config import parse_overrides
 from phaselock.datasets.physics_iq import PhysicsIQ
 from phaselock.datasets.video_io import load_video
@@ -353,7 +354,10 @@ def main() -> None:
             # The evaluator-facing file: the pipeline's own frames, under the name the
             # Physics-IQ repo expects.
             if not path.exists() or args.overwrite or diagnostic_trace is not None:
-                export_to_video(frames, str(path), fps=spec.default_fps)
+                # Keep the evaluator's exact filename and pixels; write a sibling for viewing.
+                prompted_video(torch.as_tensor(frames).permute(0, 3, 1, 2).float() / 255.0,
+                               path.with_name(f"{path.stem}_prompted{path.suffix}"),
+                               sample.prompt, fps=spec.default_fps)
             if diagnostic_trace is not None and diagnostic_trace.steps:
                 diagnostic_provenance = {
                     "sample_id": sample.sample_id, "guidance": name,
@@ -382,7 +386,8 @@ def main() -> None:
                 few_path = output / "videos" / "few_step" / video_name
                 if not few_path.exists() or args.overwrite:
                     few_path.parent.mkdir(parents=True, exist_ok=True)
-                    export_to_video(prior, str(few_path), fps=spec.default_fps)
+                    prompted_video(torch.as_tensor(prior).permute(0, 3, 1, 2).float() / 255.0,
+                                   few_path, sample.prompt, fps=spec.default_fps)
 
             # The full clip goes to disk -- the official evaluator does its own trim --
             # but only the benchmark window is scored here.

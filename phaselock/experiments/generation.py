@@ -176,9 +176,10 @@ def generate_candidate(
             {"real (reference)": reference, f"generated  k={steps}": generated},
             Path(video_dir) / f"{stem}_generation.mp4",
             fps=backend.spec.default_fps, columns=2,
+            prompt=dataset.prompt_for(scenario),
         ))
-        save_video(generated, str(Path(video_dir) / f"{stem}_raw.mp4"),
-                   fps=backend.spec.default_fps)
+        video.prompted_video(generated, Path(video_dir) / f"{stem}_raw.mp4",
+                             dataset.prompt_for(scenario), fps=backend.spec.default_fps)
 
     return Candidate(
         sample_id=sample.sample_id,

@@ -112,12 +112,54 @@ def _tile(panels: Sequence[np.ndarray], columns: int) -> np.ndarray:
     return out
 
 
+def _prompt_bar(prompt: str, width: int) -> np.ndarray:
+    """Render the full conditioning prompt in a clear, wrapped header bar."""
+    text = prompt.strip() or "(empty prompt)"
+    label = "PROMPT"
+    font_scale = 0.48
+    thickness = 1
+    pad = max(10, width // 80)
+    line_height = 21
+    available = max(1, width - 2 * pad)
+
+    def wrap(value: str) -> list[str]:
+        words, lines, current = value.split(), [], ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if current and cv2.getTextSize(candidate, _FONT, font_scale, thickness)[0][0] > available:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        # Split pathological long tokens so even URLs or unbroken identifiers remain visible.
+        expanded = []
+        for line in lines:
+            while cv2.getTextSize(line, _FONT, font_scale, thickness)[0][0] > available:
+                cut = max(1, int(len(line) * available / cv2.getTextSize(line, _FONT, font_scale, thickness)[0][0]))
+                expanded.append(line[:cut])
+                line = line[cut:]
+            expanded.append(line)
+        return expanded or [""]
+
+    lines = wrap(text)
+    height = pad * 2 + line_height * (len(lines) + 1)
+    bar = np.full((height, width, 3), 32, dtype=np.uint8)
+    cv2.putText(bar, label, (pad, pad + 13), _FONT, 0.38, (120, 205, 255), 1, cv2.LINE_AA)
+    for index, line in enumerate(lines):
+        y = pad + line_height * (index + 2)
+        cv2.putText(bar, line, (pad, y), _FONT, font_scale, (245, 245, 245), thickness, cv2.LINE_AA)
+    return bar
+
+
 def write_grid(
     clips: Mapping[str, torch.Tensor],
     path: Path,
     fps: int = 12,
     columns: Optional[int] = None,
     subtitles: Optional[Mapping[str, str]] = None,
+    prompt: Optional[str] = None,
 ) -> Path:
     """Tile named clips into one mp4, all playing on the same clock.
 
@@ -138,16 +180,25 @@ def write_grid(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     frames = (
-        _tile(
+        (lambda tiled: np.concatenate([_prompt_bar(prompt, tiled.shape[1]), tiled], axis=0)
+         if prompt is not None else tiled)(_tile(
             [
                 _label(array[min(index, array.shape[0] - 1)], name, subtitles.get(name, ""))
                 for name, array in arrays.items()
             ],
             columns,
-        )
+        ))
         for index in range(length)
     )
     encode_frames(frames, path, fps)
+    return path
+
+
+def prompted_video(frames: torch.Tensor, path: Path, prompt: str, fps: int = 8) -> Path:
+    """Save a single clip with its prompt displayed above every frame."""
+    array = _to_uint8(frames)
+    header = _prompt_bar(prompt, array.shape[2])
+    encode_frames((np.concatenate([header, frame], axis=0) for frame in array), path, fps)
     return path
 
 
@@ -201,6 +252,7 @@ def pair_video(
     scenario: str = "",
     violation: str = "",
     fps: int = 12,
+    prompt: Optional[str] = None,
 ) -> Path:
     """The matched pair side by side, on one clock.
 
@@ -215,6 +267,7 @@ def pair_video(
         },
         path, fps=fps, columns=2,
         subtitles={"plausible": scenario} if scenario else None,
+        prompt=prompt,
     )
 
 
@@ -225,6 +278,7 @@ def inversion_video(
     kind: str = "x0_hat",
     fps: int = 12,
     columns: Optional[int] = None,
+    prompt: Optional[str] = None,
 ) -> Path:
     """One panel per recorded inversion step, all playing together.
 
@@ -249,4 +303,5 @@ def inversion_video(
     return write_grid(
         clips, path, fps=fps, columns=columns,
         subtitles={label(tau): kind for tau, _ in steps},
+        prompt=prompt,
     )

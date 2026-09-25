@@ -34,10 +34,11 @@ from phaselock.runtime import prepare
 prepare()
 
 import torch
-from diffusers.utils import export_to_video, load_image
+from diffusers.utils import load_image
 
 from phaselock import set_seed
 from phaselock.backends import BACKENDS, get_entry, get_spec, load_backend
+from phaselock.analysis.video import prompted_video
 from phaselock.pipelines.phaselock import PhaseLockPipeline
 from phaselock.utils import resolve_dtype
 
@@ -139,10 +140,12 @@ def main() -> None:
         )
         frames, few_frames = pipeline(**call, seed=args.seed, return_few_result=True)
 
-    export_to_video(frames, args.output, fps=fps)
+    prompted_video(torch.as_tensor(frames).permute(0, 3, 1, 2).float() / 255.0,
+                   Path(args.output), args.prompt, fps=fps)
     logger.info("wrote %s", args.output)
     if args.save_few and few_frames is not None:
-        export_to_video(few_frames, args.save_few, fps=fps)
+        prompted_video(torch.as_tensor(few_frames).permute(0, 3, 1, 2).float() / 255.0,
+                       Path(args.save_few), args.prompt, fps=fps)
         logger.info("wrote %s", args.save_few)
 
 

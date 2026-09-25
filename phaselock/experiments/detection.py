@@ -298,6 +298,7 @@ def save_visuals(
     written.append(video.pair_video(
         plausible, violated, directory / f"{stem}_pair.mp4",
         scenario=pair.scenario, violation=pair.violation,
+        prompt=config.inversion.prompt,
     ))
 
     # Decode the clean estimate at each recorded step. Held on CPU: a decoded 81-frame
@@ -317,6 +318,7 @@ def save_visuals(
     ).noise
     written.append(video.inversion_video(
         steps, directory / f"{stem}_inversion.mp4", original=plausible, kind="x0_hat",
+        prompt=config.inversion.prompt,
     ))
 
     recovered = backend.decode(
@@ -333,6 +335,7 @@ def save_visuals(
             f"inverted  {psnr(recovered, plausible):.1f} dB": recovered,
         },
         directory / f"{stem}_roundtrip.mp4",
+        prompt=config.inversion.prompt,
     ))
     return written
 
