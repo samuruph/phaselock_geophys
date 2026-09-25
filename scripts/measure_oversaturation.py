@@ -59,6 +59,8 @@ def parse_args() -> argparse.Namespace:
                         help="HSV saturation threshold for high-saturation rates")
     parser.add_argument("--brightness-threshold", type=float, default=0.80,
                         help="HSV value threshold for bright high-saturation rate")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="write CSVs only; skip PNG plots")
     return parser.parse_args()
 
 
@@ -172,6 +174,57 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def write_plots(output_dir: Path, rows: list[dict], summary: list[dict], metrics: list[str]) -> None:
+    """Write small summary bars and a per-sample heatmap when Matplotlib is available."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("Matplotlib is not installed; skipped PNG plots")
+        return
+
+    sources = [row["source"] for row in summary]
+    labels = {
+        "mean_saturation": "Mean saturation",
+        "high_saturation_fraction": "Saturation >= 0.90",
+        "bright_high_saturation_fraction": "Bright + saturated",
+        "rgb_clipping_fraction": "RGB clipping",
+        "mean_chroma": "Mean chroma",
+    }
+    plot_metrics = ["mean_saturation", "high_saturation_fraction",
+                    "bright_high_saturation_fraction", "rgb_clipping_fraction", "mean_chroma"]
+
+    figure, axes = plt.subplots(1, len(plot_metrics), figsize=(14, 3.4), constrained_layout=True)
+    for axis, metric in zip(axes, plot_metrics):
+        values = [[float(row[f"mean_{metric}"]) for row in summary]]
+        axis.bar(sources, values[0], color=["#777777", "#4c78a8", "#f58518", "#54a24b"])
+        axis.set_title(labels[metric], fontsize=9)
+        axis.tick_params(axis="x", labelrotation=45, labelsize=8)
+        axis.grid(axis="y", alpha=0.25)
+    figure.savefig(output_dir / "oversaturation_summary.png", dpi=160)
+    plt.close(figure)
+
+    sample_ids = sorted({row["sample_id"] for row in rows})
+    heat_metric = "bright_high_saturation_fraction"
+    matrix = np.asarray([
+        [next(row[heat_metric] for row in rows
+             if row["sample_id"] == sample_id and row["source"] == source)
+         for source in sources]
+        for sample_id in sample_ids
+    ], dtype=float)
+    figure, axis = plt.subplots(
+        figsize=(6.5, max(3.0, 0.22 * len(sample_ids))), constrained_layout=True
+    )
+    image = axis.imshow(matrix, aspect="auto", cmap="magma", vmin=0, vmax=max(0.01, float(matrix.max())))
+    axis.set_xticks(range(len(sources)), sources, rotation=45, ha="right")
+    axis.set_yticks(range(len(sample_ids)), sample_ids, fontsize=7)
+    axis.set_title("Bright/high-saturation fraction per sample")
+    figure.colorbar(image, ax=axis, label="fraction")
+    figure.savefig(output_dir / "oversaturation_per_sample.png", dpi=160)
+    plt.close(figure)
+    print(f"wrote {output_dir / 'oversaturation_summary.png'}")
+    print(f"wrote {output_dir / 'oversaturation_per_sample.png'}")
+
+
 def main() -> None:
     args = parse_args()
     if args.max_frames < 1 or args.resize < 0:
@@ -225,6 +278,8 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "oversaturation_per_sample.csv", rows)
     write_csv(args.output_dir / "oversaturation_summary.csv", summary)
+    if not args.no_plots:
+        write_plots(args.output_dir, rows, summary, metrics)
     print(f"wrote {args.output_dir / 'oversaturation_per_sample.csv'}")
     print(f"wrote {args.output_dir / 'oversaturation_summary.csv'}")
 

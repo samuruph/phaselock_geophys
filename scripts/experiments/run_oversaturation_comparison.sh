@@ -14,7 +14,7 @@ REAL_ROOT="${REAL_ROOT:-/data/datasets/physics-IQ-benchmark-verified}"
 BASELINE_ROOT="${BASELINE_ROOT:-/data/experiments/phaselock_running_momentum/cogvideox_5b_i2v/physics_iq/physics_iq_test_running_momentum/videos/baseline}"
 PHASELOCK_ROOT="${PHASELOCK_ROOT:-/data/experiments/phaselock/physics_iq}"
 OURS_ROOT="${OURS_ROOT:-/data/experiments/phaselock_running_momentum/running_momentum_source_latent/cogvideox_5b_i2v/physics_iq/physics_iq_test_running_momentum/videos/motion_on_latent}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/experiments/oversaturation/physics_iq_running_momentum}"
+OUTPUT_DIR="${OUTPUT_DIR:-./output/oversaturation/physics_iq_running_momentum}"
 
 python scripts/measure_oversaturation.py \
   --real-root "$REAL_ROOT" \
