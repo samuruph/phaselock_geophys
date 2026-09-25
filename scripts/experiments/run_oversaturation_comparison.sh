@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve the repository root so this launcher works even when called from another cwd.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO_ROOT"
+
 # Compare oversaturation on the exact sample intersection shared by real Physics-IQ,
 # baseline, PhaseLock, and the running-momentum Ours videos. The Python evaluator derives
 # real-video paths from the Physics-IQ metadata and joins every generated directory by its

@@ -24,8 +24,14 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+# When invoked as ``python scripts/measure_oversaturation.py``, Python puts ``scripts/``
+# on sys.path rather than the repository root.  Keep the evaluator runnable from any
+# shell/conda environment without requiring an editable package install.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np
@@ -159,8 +165,9 @@ def measure_video(path: Path, max_frames: int, resize: int,
 def write_csv(path: Path, rows: list[dict]) -> None:
     if not rows:
         return
+    fieldnames = list(dict.fromkeys(key for row in rows for key in row))
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
