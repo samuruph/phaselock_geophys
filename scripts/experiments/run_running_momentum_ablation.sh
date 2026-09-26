@@ -7,9 +7,9 @@ set -euo pipefail
 # To run the full benchmark, remove the --sample-id list from each command and use new
 # run IDs so the seven-clip pilot outputs are not mixed with full-benchmark outputs.
 
-# Corrected default, including a paired unguided baseline. This is the common reference
-# for every single-parameter command below: strength 0.05, floor 0.1, cap 0.1,
-# velocity decay 0.01, beta1 0.9, beta2 0.999, and guidance window [0, 25).
+# Original controller defaults, including a paired unguided baseline. This is the common
+# reference for the single-parameter commands below: strength 0.05, velocity decay 0.01,
+# beta1 0.9, beta2 0.999, and guidance window [0, 25). There is no variance floor or update cap.
 python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance baseline motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_default diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
 
 # Guidance strength: configured value is 0.05.
