@@ -221,10 +221,6 @@ class PhaseLockConfig:
     beta2: float = 0.999
     velocity_decay: float = 0.01
     """Extra decay applied to the running first moment before its EMA update."""
-    variance_floor_fraction: float = 0.1
-    """Minimum adaptive denominator as a fraction of the current motion RMS."""
-    max_update_ratio: float = 0.1
-    """Maximum applied guidance RMS as a fraction of the post-step latent RMS."""
     running_momentum_mode: str = "residual" # residual or snr
     """Which quantity the momentum guidance is built from."""
     running_momentum_source: str = "latent"
@@ -245,8 +241,6 @@ class PhaseLockConfig:
             raise ValueError("phaselock.beta1 and beta2 must be in [0, 1)")
         if not 0 <= self.velocity_decay < 1:
             raise ValueError("phaselock.velocity_decay must be in [0, 1)")
-        if self.variance_floor_fraction < 0 or self.max_update_ratio < 0:
-            raise ValueError("phaselock momentum bounds must be non-negative")
         if self.few_step_prior_type not in OPERATORS:
             raise ValueError(
                 f"unknown phaselock.few_step_prior_type {self.few_step_prior_type!r}; "

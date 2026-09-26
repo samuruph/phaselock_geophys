@@ -143,7 +143,7 @@ def test_running_momentum_uses_post_step_latent_or_current_step_x0_hat(spec, sou
     expected = selected[1:] - selected[:-1]
     assert torch.equal(trace.steps[0].current, expected)
     assert torch.allclose(controller.m1, expected * .1)
-    assert torch.count_nonzero(controller.m2) == 0  # first residual is zero
+    assert torch.allclose(controller.m2, (1.0 - controller.beta2) * expected.square())
     assert torch.allclose(to_canonical(out["latents"], spec)[1:],
                           post[1:] + .05 * trace.steps[0].correction)
     assert torch.equal(to_canonical(out["latents"], spec)[0], post[0])
@@ -157,19 +157,20 @@ def test_post_step_latent_momentum_does_not_require_prediction_capture():
 
 
 @pytest.mark.parametrize("velocity_decay", [0.0, 0.01, 0.2])
-def test_constant_motion_is_a_fixed_point_with_velocity_decay(velocity_decay):
+def test_momentum_matches_original_ema_recurrence(velocity_decay):
     controller = RunningMomentumGuidance(
         COGVIDEOX_5B, velocity_decay=velocity_decay, guide_end=20,
     )
     motion = torch.full((2, 3, 2, 2), 2.0)
-    for _ in range(12):
-        correction = controller._update_momentum(motion)
-        assert torch.allclose(controller.mean, motion, atol=1e-6)
-        assert controller.variance.abs().max() < 1e-10
-        assert correction.abs().max() < 1e-5
+    correction = controller._update_momentum(motion)
+    expected_m1 = (1.0 - velocity_decay) * 0.0 + (1.0 - controller.beta1) * motion
+    expected_variance = motion.square()
+    assert torch.allclose(controller.m1, expected_m1)
+    assert torch.allclose(controller.variance, expected_variance)
+    assert torch.isfinite(correction).all()
 
 
-def test_second_moment_tracks_the_applied_residual_and_not_raw_first_moment():
+def test_second_moment_tracks_difference_from_previous_first_moment():
     controller = RunningMomentumGuidance(
         COGVIDEOX_5B, betas=(0.5, 0.5), velocity_decay=0.2, guide_end=3,
     )
@@ -177,17 +178,15 @@ def test_second_moment_tracks_the_applied_residual_and_not_raw_first_moment():
     second = torch.full_like(first, 3.0)
     controller._update_momentum(first)
     controller._update_momentum(second)
-    residual = controller.mean - second
-    expected_variance = (0.5 * residual.square()) / (1 - 0.5**2)
+    expected_m2 = 0.5 * 0.5 + 0.5 * (second - 0.5).square()
+    expected_variance = expected_m2 / (1 - 0.5**2)
     assert torch.allclose(controller.variance, expected_variance)
 
 
 @pytest.mark.parametrize("change", [1e-5, 10.0])
-def test_guidance_update_is_finite_and_bounded(change):
+def test_guidance_update_is_finite_and_unclipped(change):
     spec = COGVIDEOX_5B
-    controller = RunningMomentumGuidance(
-        spec, guidance_strength=1.0, guide_end=3, max_update_ratio=0.05,
-    )
+    controller = RunningMomentumGuidance(spec, guidance_strength=1.0, guide_end=3)
     z = torch.zeros(3, spec.channels, 2, 2)
     z[1:] = 1.0
     controller(None, 0, torch.tensor(750), {"latents": from_canonical(z, spec)})
@@ -199,11 +198,8 @@ def test_guidance_update_is_finite_and_bounded(change):
     update = guided[1:] - changed[1:]
     assert torch.isfinite(guided).all()
     assert torch.equal(guided[0], changed[0])
-    assert update.square().mean().sqrt() <= 0.05 * changed.square().mean().sqrt() + 1e-7
     if change == 10.0:
-        assert update.square().mean().sqrt() == pytest.approx(
-            0.05 * changed.square().mean().sqrt(), rel=1e-5,
-        )
+        assert update.square().mean().sqrt() > 0.05 * changed.square().mean().sqrt()
 
 
 def test_x0_hat_momentum_requires_captured_prediction():
@@ -234,7 +230,7 @@ def test_blended_running_momentum_interpolates_motion_before_moments(spec, step,
     expected = (1 - weight) * clean_motion + weight * latent_motion
     assert torch.allclose(trace.steps[0].current, expected)
     assert torch.allclose(controller.m1, expected * .1)
-    assert torch.count_nonzero(controller.m2) == 0  # first residual is zero
+    assert torch.allclose(controller.m2, (1.0 - controller.beta2) * expected.square())
     assert trace.summaries()[0]["latent_weight"] == pytest.approx(weight)
     strength = controller.compute_schedule(step)
     assert torch.allclose(to_canonical(out["latents"], spec)[1:],

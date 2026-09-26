@@ -34,7 +34,7 @@ phaselock:
   beta1: 0.9
   beta2: 0.999
   running_momentum_mode: residual # residual | snr
-  running_momentum_source: blend # latent | x0_hat | blend 
+  running_momentum_source: latent # latent | x0_hat | blend
   # latent: use the post-step latent as the source for the running momentum update
   # x0_hat: use the pre-step x0_hat as the source for the running momentum update
   # blend: blend the post-step latent and pre-step x0_hat as the source for the running momentum update

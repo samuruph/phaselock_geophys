@@ -34,15 +34,3 @@ python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running
 
 # Momentum formula: configured mode is residual.
 python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_mode_snr phaselock__running_momentum_mode=snr diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
-
-# Adaptive denominator floor: 0.1 is the corrected default. The new floor/cap sweeps
-# all use strength 0.10, with rm_fixed_strength_010 above as their reference. A stronger
-# intervention makes the cap more likely to activate.
-python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_floor_0 phaselock__guidance_strength=0.10 phaselock__variance_floor_fraction=0.0 diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
-python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_floor_001 phaselock__guidance_strength=0.10 phaselock__variance_floor_fraction=0.01 diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
-python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_floor_03 phaselock__guidance_strength=0.10 phaselock__variance_floor_fraction=0.3 diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
-
-# Maximum applied update RMS relative to latent RMS: 0.1 is the corrected default.
-python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_cap_0025 phaselock__guidance_strength=0.10 phaselock__max_update_ratio=0.025 diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
-python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_cap_005 phaselock__guidance_strength=0.10 phaselock__max_update_ratio=0.05 diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49
-python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 0002 0004 0005 0007 0008 0010 --diagnostics -- output__run_id=rm_fixed_cap_02 phaselock__guidance_strength=0.10 phaselock__max_update_ratio=0.2 diagnostics__record_steps=0,1,2,3,4,5,10,20,30,40,49

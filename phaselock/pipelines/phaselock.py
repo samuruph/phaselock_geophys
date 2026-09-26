@@ -68,8 +68,6 @@ class PhaseLockPipeline:
         betas: Tuple[float, float] = (0.9, 0.999),
         running_momentum_mode: str = "residual",
         velocity_decay: float = 0.01,
-        variance_floor_fraction: float = 0.1,
-        max_update_ratio: float = 0.1,
         few_steps: int = 2,
         full_steps: int = 50,
         guidance_strength: float = 0.05,
@@ -94,8 +92,6 @@ class PhaseLockPipeline:
             self.betas = betas
             self.running_momentum_mode = running_momentum_mode
             self.velocity_decay = velocity_decay
-            self.variance_floor_fraction = variance_floor_fraction
-            self.max_update_ratio = max_update_ratio
         self.few_steps = few_steps
         self.full_steps = full_steps
         self.guidance_strength = guidance_strength
@@ -152,8 +148,6 @@ class PhaseLockPipeline:
             "betas",
             "running_momentum_mode",
             "velocity_decay",
-            "variance_floor_fraction",
-            "max_update_ratio",
             "exploration",
             "refinement",
         }
@@ -218,8 +212,6 @@ class PhaseLockPipeline:
                 mode=self.running_momentum_mode,
                 betas=self.betas,
                 velocity_decay=self.velocity_decay,
-                variance_floor_fraction=self.variance_floor_fraction,
-                max_update_ratio=self.max_update_ratio,
                 recorder=diagnostic_recorder,
                 backend=self.backend,
                 prediction_capture=prediction_capture,

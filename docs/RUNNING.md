@@ -265,8 +265,7 @@ Use `diagnostics__save_raw_tensors=true` only when you need the full latent tens
 | | `few_step_prior_source` | which tensor the prior is measured on: `latent` (the sampler state, PhaseLock's own), `x0_hat` or `velocity` |
 | | `few_step_prior_type` | which quantity the few-step prior is built from and the full pass is held to: `motion` (PhaseLock's own first difference), `accel`, `jerk` or `perr` |
 | | `running_momentum_source`, `running_momentum_mode` | source: `latent`, `x0_hat`, or `blend`; mode: `residual` or `snr` |
-| | `beta1`, `beta2`, `velocity_decay` | first- and second-moment EMA coefficients and extra first-moment decay; the first moment is normalized by its actual accumulated observation weight |
-| | `variance_floor_fraction`, `max_update_ratio` | lower bound on the adaptive denominator relative to motion RMS, and upper bound on applied guidance RMS relative to latent RMS; both default to 0.1 |
+| | `beta1`, `beta2`, `velocity_decay` | first- and second-moment EMA coefficients and extra first-moment decay |
 | `output` | `root`, `run_id`, `name` | artefacts land in `{root}/{run_id}/{backend}/{dataset}/{name}/` |
 | | `backend` / `dataset` | filled in automatically from `backend.name` and `data.name`; set by hand only to file a run elsewhere |
 

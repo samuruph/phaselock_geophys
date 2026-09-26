@@ -299,8 +299,6 @@ def main() -> None:
         betas=(config.phaselock.beta1, config.phaselock.beta2),
         running_momentum_mode=config.phaselock.running_momentum_mode,
         velocity_decay=config.phaselock.velocity_decay,
-        variance_floor_fraction=config.phaselock.variance_floor_fraction,
-        max_update_ratio=config.phaselock.max_update_ratio,
         few_steps=config.phaselock.few_steps,
         full_steps=config.generation.num_steps,
         guidance_strength=config.phaselock.guidance_strength,
