@@ -302,6 +302,7 @@ class RunningMomentumGuidance:
         backend: Any = None,
         prediction_capture: Any = None,
         source: str = "latent",
+        exploration: Any = None,
     ):
         if mode not in {"residual", "snr"}:
             raise ValueError(
@@ -334,6 +335,8 @@ class RunningMomentumGuidance:
         self.backend = backend
         self.prediction_capture = prediction_capture
         self.source = source
+        self.exploration = exploration
+        self.last_step_metrics = {}
 
         self.m1 = None
         self.m2 = None
@@ -411,10 +414,19 @@ class RunningMomentumGuidance:
         if latents is None:
             return callback_kwargs
 
-        canonical = to_canonical(latents, self.spec)
-        # Preserve the original latent mode: callback latents are post-scheduler.
-        # x0_hat is only available from the model prediction made at the current t.
         state = self.prediction_capture.consume(timestep) if self.prediction_capture else None
+        callback_kwargs["latents"] = self.apply_step(pipe, step_index, timestep, latents, state)
+        return callback_kwargs
+
+    def apply_step(self, pipe, step_index, timestep, latents, state=None,
+                   confidence=None, extras=None):
+        """One outer-step observation/update, shared by callbacks and P&P.
+
+        Confidence gates the controller, never its running moment observations.
+        The state always belongs to the prediction's own input and timestep.
+        """
+        canonical = to_canonical(latents, self.spec)
+        extras = dict(extras or {})
         latent_weight = None
         if self.source == "latent":
             current = canonical[1:] - canonical[:-1]
@@ -433,6 +445,10 @@ class RunningMomentumGuidance:
 
         correction = self._update_momentum(current)
         strength = self.compute_schedule(step_index)
+        if confidence is not None:
+            extras["ungated_momentum_update"] = strength * correction
+            correction = correction * confidence[:, None].to(correction.device)
+            extras["confidence"] = confidence
         guided = canonical.clone()
         if strength != 0.0:
             update = strength * correction
@@ -441,10 +457,28 @@ class RunningMomentumGuidance:
             correction = correction * (max_rms / update_rms.clamp_min(self.epsilon)).clamp(max=1.0)
             update = strength * correction
             guided[1:] = canonical[1:] + update.to(canonical.dtype)
-            callback_kwargs["latents"] = (
-                from_canonical(guided, self.spec)
-                .to(latents.dtype)
-            )
+
+        if extras or self.exploration is not None:
+            extras["momentum_update"] = guided.float() - canonical.float()
+        if self.exploration is not None:
+            if state is None:
+                raise RuntimeError("exploration requires the current clean prediction")
+            timesteps = pipe.scheduler.timesteps
+            if step_index + 1 >= len(timesteps):
+                noise_coefficient = 0.0
+            else:
+                next_t = timesteps[step_index + 1]
+                clean_scale = float(self.backend.renoise_scale(next_t))
+                if self.spec.name.startswith("cog"):
+                    noise_coefficient = max(0.0, 1 - clean_scale ** 2) ** 0.5
+                else:
+                    noise_coefficient = 1 - clean_scale
+            guided, exploration_stats = self.exploration.apply(
+                guided, state.x0, self.variance, step_index, noise_coefficient)
+            extras.update(exploration_stats)
+        if extras:
+            extras["total_update"] = guided.float() - canonical.float()
+        self.last_step_metrics = {k: v for k, v in extras.items() if not torch.is_tensor(v)}
 
         if self.recorder is not None:
             if state is None:
@@ -454,7 +488,7 @@ class RunningMomentumGuidance:
                 m1=self.m1, m2=self.m2, mean=self.mean, variance=self.variance,
                 correction=correction, strength=strength, x0=state.x0,
                 latents_before=canonical, latents_after=guided, flow=state.drift,
-                latent_weight=latent_weight,
+                latent_weight=latent_weight, extras=extras,
             )
 
-        return callback_kwargs
+        return from_canonical(guided, self.spec).to(latents.dtype)

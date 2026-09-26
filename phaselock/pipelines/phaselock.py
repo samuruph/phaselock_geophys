@@ -11,6 +11,7 @@ that Wan works alongside CogVideoX.
 from __future__ import annotations
 
 import gc
+import time
 from contextlib import nullcontext
 from typing import Any, List, Optional, Tuple, Union
 
@@ -76,7 +77,17 @@ class PhaseLockPipeline:
         guide_end: Optional[int] = None,
         few_step_prior_type: str = "motion",
         source: str = "latent",
+        exploration: Any = None,
+        refinement: Any = None,
     ):
+        from ..config import ExplorationConfig, RefinementConfig
+        self.exploration = exploration or ExplorationConfig()
+        self.refinement = refinement or RefinementConfig()
+        if self.exploration.enabled and self.refinement.enabled:
+            raise ValueError("exploration and refinement cannot be combined yet")
+        if (self.exploration.enabled or self.refinement.enabled) and prior_mode != "running_momentum":
+            raise ValueError("extensions require running_momentum")
+        self.last_run_metrics = {}
         self.backend = backend
         self.prior_mode = prior_mode
         if self.prior_mode == "running_momentum":
@@ -143,6 +154,8 @@ class PhaseLockPipeline:
             "velocity_decay",
             "variance_floor_fraction",
             "max_update_ratio",
+            "exploration",
+            "refinement",
         }
         settings = {k: v for k, v in kwargs.items() if k in phaselock_keys}
         loader = {k: v for k, v in kwargs.items() if k not in phaselock_keys}
@@ -166,6 +179,7 @@ class PhaseLockPipeline:
         seed: int = 42,
         return_few_result: bool = False,
         diagnostic_recorder: Optional[MomentumTrace] = None,
+        baseline: bool = False,
     ) -> Union[List[Image.Image], Tuple[List[Image.Image], List[Image.Image]]]:
         """Generate with motion-prior guidance.
 
@@ -188,14 +202,17 @@ class PhaseLockPipeline:
 
         # Option A: running-momentum guidance, without freezed few-step guidance
         if self.prior_mode == "running_momentum":
+            from ..sampling.exploration import StochasticExploration
+            started = time.perf_counter()
             prediction_capture = (
                 StepPredictionCapture(self.backend, guidance_scale)
-                if diagnostic_recorder is not None or self.source in {"x0_hat", "blend"}
+                if not self.refinement.enabled and (diagnostic_recorder is not None
+                    or self.source in {"x0_hat", "blend"} or self.exploration.enabled)
                 else None
             )
             guidance = RunningMomentumGuidance(
                 spec=spec,
-                guidance_strength=self.guidance_strength,
+                guidance_strength=0.0 if baseline else self.guidance_strength,
                 guide_start=self.guide_start,
                 guide_end=self.guide_end,
                 mode=self.running_momentum_mode,
@@ -207,7 +224,21 @@ class PhaseLockPipeline:
                 backend=self.backend,
                 prediction_capture=prediction_capture,
                 source=self.source,
+                exploration=(StochasticExploration(self.exploration, self.guide_start, self.guide_end)
+                             if self.exploration.enabled and not baseline else None),
             )
+
+            if self.refinement.enabled:
+                from dataclasses import replace
+                from ..sampling.cogvideox_pnp import run_refinement
+                refinement = (replace(self.refinement, steps_per_timestep=0) if baseline
+                              else self.refinement)
+                result, self.last_run_metrics = run_refinement(
+                    self.backend, guidance, refinement, **shared,
+                    num_inference_steps=self.full_steps,
+                    generator=torch.Generator(device=device).manual_seed(seed))
+                final_result = result.frames[0]
+                return (final_result, None) if return_few_result else final_result
 
             capture_context = prediction_capture if prediction_capture is not None else nullcontext()
             with capture_context:
@@ -218,6 +249,13 @@ class PhaseLockPipeline:
                     callback_on_step_end=guidance,
                     callback_on_step_end_tensor_inputs=["latents"],
                 ).frames[0]
+            self.last_run_metrics = {
+                "guided_predictions": self.full_steps,
+                "transformer_calls": (prediction_capture.total_calls if prediction_capture else None),
+                "wall_seconds": time.perf_counter() - started,
+                "sampler_class": type(self.pipe.scheduler).__name__,
+                "sampler_config": dict(self.pipe.scheduler.config),
+            } if self.exploration.enabled else {}
 
             if return_few_result:
                 return final_result, None

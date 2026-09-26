@@ -59,12 +59,13 @@ class DiagnosticStep:
     flow: Optional[torch.Tensor] = None
     strength: float = 0.0
     latent_weight: Optional[float] = None
+    extras: dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
         applied = self.correction * self.strength
         mean = self.m1 if self.mean is None else self.mean
         variance = self.m2 if self.variance is None else self.variance
-        return {
+        result = {
             "step": self.step,
             "timestep": self.timestep,
             "tau": self.tau,
@@ -90,6 +91,13 @@ class DiagnosticStep:
             "sqrt_m2_rms_by_latent_transition": _sqrt_m2_temporal_rms(variance).tolist(),
             "applied_guidance_by_latent_transition": _temporal_rms(applied).tolist(),
         }
+        if self.extras:
+            result["extensions"] = {
+                key: ({"rms": _rms(value), "min": float(value.min()), "max": float(value.max())}
+                      if torch.is_tensor(value) else value)
+                for key, value in self.extras.items()
+            }
+        return result
 
 
 @dataclass
@@ -109,6 +117,7 @@ class MomentumTrace:
         latents_after: Optional[torch.Tensor] = None, flow: Optional[torch.Tensor] = None,
         mean: Optional[torch.Tensor] = None, variance: Optional[torch.Tensor] = None,
         latent_weight: Optional[float] = None,
+        extras: Optional[dict[str, Any]] = None,
     ) -> None:
         if self.record_steps is not None and step not in self.record_steps:
             return
@@ -121,6 +130,8 @@ class MomentumTrace:
             latent_weight=latent_weight,
             latents_before=_cpu(latents_before) if self.save_raw else None,
             latents_after=_cpu(latents_after) if self.save_raw else None, flow=_cpu(flow),
+            extras={k: (_cpu(v) if torch.is_tensor(v) else v)
+                    for k, v in (extras or {}).items() if self.save_raw or k != "inner_tensors"},
         ))
 
     def summaries(self) -> list[dict[str, Any]]:
@@ -446,11 +457,87 @@ def render_dashboard(
         "step_videos": [f"steps/step_{s.step:03d}.mp4" for s in guided.steps],
         "dashboard_video": out.name,
     }
+    if any(s.extras for s in guided.steps):
+        extension_path = out.with_name("extensions.mp4")
+        payload["extensions"] = render_extensions(
+            guided, extension_path, decode, fps, preview_height, temporal_ratio)
     out.with_suffix(".json").write_text(json.dumps(payload, indent=2))
     for obsolete in (out.parent / "baseline_summary.json",
                      out.parent / f"{guided.name}_summary.json"):
         obsolete.unlink(missing_ok=True)
     return out
+
+
+def render_extensions(trace, path, decode, fps, height, temporal_ratio):
+    """Separate synchronized extension panels; legacy dashboard layout stays stable."""
+    labels = {
+        "motion_support": "Motion support", "historical_disagreement": "Outer-step disagreement",
+        "exploration_mask": "Exploration mask", "noise_update": "Applied noise",
+        "momentum_update": "Applied momentum", "total_update": "Total post-step change",
+        "pnp_disagreement": "Within-step motion disagreement", "confidence": "Preservation confidence",
+        "ungated_momentum_update": "Ungated momentum proposal", "refinement_update": "P&P continuation change",
+    }
+    keys = [k for k in labels if any(k in s.extras for s in trace.steps)]
+    update_keys = {k for k in keys if "update" in k}
+    scales = {}
+    for key in keys:
+        maps = []
+        for step in trace.steps:
+            value = step.extras.get(key)
+            if value is not None:
+                maps.append((value.square().mean(1).sqrt() if value.ndim == 4 else value).flatten())
+        scales[key] = max(float(torch.quantile(torch.cat(maps), .99)), _EPS)
+        if key in {"motion_support", "historical_disagreement", "exploration_mask", "confidence"}:
+            scales[key] = 1.0
+    shared_update_scale = max((scales[k] for k in update_keys), default=1.0)
+    for key in update_keys:
+        scales[key] = shared_update_scale
+    width = max(160, int(height * 1.5))
+    size = (width, height)
+    steps = np.array([s.step for s in trace.steps], dtype=float)
+    series = []
+    for key, color in (("momentum_update", (70, 210, 255)), ("noise_update", (255, 180, 60)),
+                       ("refinement_update", (150, 255, 100))):
+        if key in keys:
+            series.append((key.replace("_update", ""), np.array([
+                _rms(s.extras[key]) if key in s.extras else 0 for s in trace.steps]), color))
+
+    def frames():
+        for step in trace.steps:
+            if step.x0 is None:
+                continue
+            clean = decode(step.x0).detach().float().cpu()
+            before = step.extras.get("original_clean")
+            before_video = decode(before).detach().float().cpu() if before is not None else clean
+            for frame_index in range(len(clean)):
+                panels = []
+                for video, title in ((before_video, "Original clean prediction"), (clean, "Final clean prediction")):
+                    rgb = (video[frame_index].clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                    panels.append(_caption(cv2.resize(rgb, size), title))
+                for key in keys:
+                    value = step.extras.get(key)
+                    canvas = np.zeros((height, width, 3), np.uint8)
+                    if value is not None:
+                        if value.shape[0] == step.current.shape[0]:
+                            index = _video_to_transition(frame_index, temporal_ratio, value.shape[0])
+                        else:
+                            index = min((frame_index + temporal_ratio - 1) // temporal_ratio, value.shape[0] - 1)
+                        if index is not None:
+                            field = value[index]
+                            if field.ndim == 2:
+                                field = field[None]
+                            canvas = _map(field, scales[key], size)
+                    panels.append(_caption(canvas, labels[key]))
+                while len(panels) % 3:
+                    panels.append(np.zeros_like(panels[0]))
+                grid = np.concatenate([np.concatenate(panels[j:j+3], axis=1)
+                                       for j in range(0, len(panels), 3)], axis=0)
+                chart = _chart(series, f"Step {step.step}: intervention RMS", width * 3, 140,
+                               steps, step.step, "denoising step", (float(steps.min()), float(steps.max())))
+                yield np.concatenate((grid, chart), axis=0)
+    encode_frames(frames(), path, fps=fps)
+    return {"video": path.name, "scales_p99": scales,
+            "interpretation": "Outer-step residual history and within-step P&P disagreement are distinct heuristics, not physics uncertainty."}
 
 
 class StepPredictionCapture:
@@ -461,9 +548,11 @@ class StepPredictionCapture:
         self.guidance_scale = guidance_scale
         self.calls: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.handle = None
+        self.total_calls = 0
 
     def __enter__(self):
         def hook(_module, args, kwargs, output):
+            self.total_calls += 1
             hidden = kwargs.get("hidden_states")
             if hidden is None and args:
                 hidden = args[0]

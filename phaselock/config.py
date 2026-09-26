@@ -148,6 +148,43 @@ class DiagnosticConfig:
 
 
 @dataclass(frozen=True)
+class ExplorationConfig:
+    """Opt-in post-momentum exploration; variance is a disagreement heuristic."""
+
+    enabled: bool = False
+    mask_mode: str = "motion_disagreement"
+    noise_ratio: float = 0.01
+    floor: float = 0.05
+    seed: int = 0
+    structured: bool = True
+
+    def __post_init__(self) -> None:
+        import math
+        if self.mask_mode not in {"uniform", "motion", "disagreement", "motion_disagreement"}:
+            raise ValueError("unknown exploration.mask_mode")
+        if not math.isfinite(self.noise_ratio) or self.noise_ratio < 0:
+            raise ValueError("exploration.noise_ratio must be finite and non-negative")
+        if not 0 <= self.floor <= 1:
+            raise ValueError("exploration.floor must be in [0, 1]")
+        if self.seed < 0:
+            raise ValueError("exploration.seed must be non-negative")
+
+
+@dataclass(frozen=True)
+class RefinementConfig:
+    """CogVideoX DDIM adaptation of same-timestep Predict-and-Perturb."""
+
+    enabled: bool = False
+    steps_per_timestep: int = 1
+    confidence_gate: bool = True
+    seed: int = 0
+
+    def __post_init__(self) -> None:
+        if self.steps_per_timestep < 0 or self.seed < 0:
+            raise ValueError("refinement steps and seed must be non-negative")
+
+
+@dataclass(frozen=True)
 class PhaseLockConfig:
     """Latent Delta Guidance settings.
 
@@ -277,7 +314,15 @@ class Config:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     diagnostics: DiagnosticConfig = field(default_factory=DiagnosticConfig)
     phaselock: PhaseLockConfig = field(default_factory=PhaseLockConfig)
+    exploration: ExplorationConfig = field(default_factory=ExplorationConfig)
+    refinement: RefinementConfig = field(default_factory=RefinementConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+
+    def __post_init__(self) -> None:
+        if self.exploration.enabled and self.refinement.enabled:
+            raise ValueError("exploration and refinement must be evaluated separately")
+        if (self.exploration.enabled or self.refinement.enabled) and self.phaselock.prior_mode != "running_momentum":
+            raise ValueError("momentum extensions require prior_mode=running_momentum")
 
     def resolved(self) -> "Config":
         """Fill the output path's backend and dataset segments from this config.

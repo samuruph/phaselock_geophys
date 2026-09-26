@@ -54,6 +54,9 @@ import argparse
 import csv
 import gc
 import logging
+import json
+import dataclasses
+import importlib.metadata
 import sys
 from pathlib import Path
 
@@ -190,6 +193,10 @@ def generate(pipeline: PhaseLockPipeline, name: str, want_prior: bool, seed: int
     the callback then hands its kwargs back untouched -- but the prior pass plus its VAE
     round trip is real compute for a result that is thrown away.
     """
+    extensions = pipeline.exploration.enabled or pipeline.refinement.enabled
+    if name == "baseline" and extensions:
+        frames = pipeline(**kwargs, seed=seed, baseline=True, diagnostic_recorder=diagnostic_recorder)
+        return frames, None
     if name == "baseline":
         shared = pipeline.backend.generation_kwargs(**kwargs)
         frames = pipeline.pipe(
@@ -216,6 +223,23 @@ def main() -> None:
     set_seed(config.generation.seed)
 
     output = config.output.dir()
+    extensions = config.exploration.enabled or config.refinement.enabled
+    if extensions:
+        # Validate provenance before overwriting config or skipping any existing video.
+        signature = config.to_dict()
+        signature.pop("output", None)
+        signature.pop("diagnostics", None)
+        signature["resolved_source"] = args.source or config.phaselock.running_momentum_source
+        signature["sample_ids"] = sorted(args.sample_id or [])
+        signature["selection"] = {k: getattr(args, k, None) for k in ("categories", "perspectives", "limit")}
+        signature["versions"] = {p: importlib.metadata.version(p) for p in ("torch", "diffusers")}
+        metadata_path = output / "extension_run.json"
+        if metadata_path.exists() and json.loads(metadata_path.read_text()) != signature:
+            raise SystemExit("Incompatible extension run metadata; choose a new output__run_id")
+        if not metadata_path.exists() and (output / "videos").exists():
+            raise SystemExit("Existing videos lack extension metadata; choose a new output__run_id")
+        output.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(signature, indent=2, sort_keys=True))
     config.save(output / "config.json")
 
     dataset = PhysicsIQ(**({"root": config.data.root} if config.data.root else {}))
@@ -283,6 +307,8 @@ def main() -> None:
         guide_start=config.phaselock.guide_start,
         guide_end=config.phaselock.guide_end,
         source=source,
+        exploration=config.exploration,
+        refinement=config.refinement,
     )
     if pipeline.source != source:
         raise SystemExit(f"asked for source {source!r} but the pipeline has "
@@ -336,7 +362,7 @@ def main() -> None:
             diagnostic_trace = None
             diagnostic_dir = (output / config.diagnostics.output_subdir / Path(video_name).stem / settings[name])
             diagnostic_path = diagnostic_dir / "dashboard.mp4"
-            if (config.diagnostics.enabled and name != "baseline"
+            if (config.diagnostics.enabled and (name != "baseline" or extensions)
                     and config.phaselock.prior_mode == "running_momentum"):
                 diagnostic_trace = MomentumTrace(name, save_raw=config.diagnostics.save_raw_tensors,
                                              record_steps=(set(config.diagnostics.record_steps)
@@ -352,6 +378,15 @@ def main() -> None:
                 guidance_scale=config.generation.guidance_scale,
                 negative_prompt=config.generation.negative_prompt,
             )
+            if extensions:
+                metadata = {"source": source, "generation_seed": config.generation.seed,
+                            "exploration": dataclasses.asdict(config.exploration),
+                            "refinement": dataclasses.asdict(config.refinement),
+                            "versions": signature["versions"], **pipeline.last_run_metrics}
+                metadata_file = (output / "sampling" / settings[name]
+                                 / f"{Path(video_name).stem}.json")
+                metadata_file.parent.mkdir(parents=True, exist_ok=True)
+                metadata_file.write_text(json.dumps(metadata, indent=2))
 
             # The evaluator-facing file: the pipeline's own frames, under the name the
             # Physics-IQ repo expects.
@@ -370,6 +405,8 @@ def main() -> None:
                                      else "smooth_blend_of_post_step_latents_and_current_step_x0_hat"),
                     "correction_target": "post_scheduler_step_latents",
                 }
+                if extensions:
+                    diagnostic_provenance.update(metadata)
                 diagnostic_trace.save(diagnostic_dir, provenance=diagnostic_provenance)
                 render_dashboard(
                     diagnostic_trace, diagnostic_path,

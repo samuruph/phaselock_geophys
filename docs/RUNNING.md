@@ -258,6 +258,8 @@ Use `diagnostics__save_raw_tensors=true` only when you need the full latent tens
 | `metrics` | `ar_order`, `residual_fit`, `ridge_lambda`, `bootstrap_resamples` | statistic options |
 | `generation` | `num_steps`, `step_sweep`, `blur_sweep`, `guidance_scale`, `num_candidates`, `seed`, `negative_prompt` | sampling |
 | `diagnostics` | `enabled`, `record_steps`, `save_raw_tensors`, `fps`, `preview_height`, `output_subdir` | opt-in moment and applied-guidance dashboard, with one replayable movie per selected denoising step |
+| `exploration` | `enabled`, `mask_mode`, `noise_ratio`, `floor`, `seed`, `structured` | post-momentum noise, with an independent seed. Masks: `uniform`, `motion`, `disagreement`, `motion_disagreement`. Defaults: disabled, motion × disagreement, 0.01, 0.05, 0, true. `structured=false` is a matched-RMS noise control. |
+| `refinement` | `enabled`, `steps_per_timestep`, `confidence_gate`, `seed` | CogVideoX I2V DDIM P&P. `steps_per_timestep` is the extra predictions per guided outer step. Defaults: disabled, 1, true, 0. |
 | `phaselock` | `few_steps`, `guidance_strength`, `guide_start`, `guide_end` | Latent Delta Guidance, at the paper's defaults. `guide_end: null` resolves to half of `generation.num_steps` |
 | | `prior_mode` | `few_step` uses the original two-step prior; `running_momentum` builds a moving reference from each denoising step |
 | | `few_step_prior_source` | which tensor the prior is measured on: `latent` (the sampler state, PhaseLock's own), `x0_hat` or `velocity` |
@@ -267,6 +269,57 @@ Use `diagnostics__save_raw_tensors=true` only when you need the full latent tens
 | | `variance_floor_fraction`, `max_update_ratio` | lower bound on the adaptive denominator relative to motion RMS, and upper bound on applied guidance RMS relative to latent RMS; both default to 0.1 |
 | `output` | `root`, `run_id`, `name` | artefacts land in `{root}/{run_id}/{backend}/{dataset}/{name}/` |
 | | `backend` / `dataset` | filled in automatically from `backend.name` and `data.name`; set by hand only to file a run elsewhere |
+
+### Running-momentum extensions (CogVideoX I2V)
+
+The new experiments are opt-in and use separate run IDs. Each line in the scripts is
+a standalone command that can be copied and run separately. The listed commands use
+the same seven Physics-IQ clips; change the sample list to `--sample-id 0001` for a
+one-sample smoke test, or remove `--sample-id` and choose new run IDs for the full set:
+
+```bash
+python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 --diagnostics -- exploration__enabled=true output__run_id=explore_smoke_g42
+python scripts/run_physics_iq.py --config configs/experiments/physics_iq_running_momentum.yaml --guidance motion --source latent --sample-id 0001 --diagnostics -- refinement__enabled=true refinement__steps_per_timestep=1 output__run_id=pnp_smoke_g42
+```
+
+The full sets of plain commands are in `scripts/experiments/run_momentum_exploration.sh`
+and `scripts/experiments/run_momentum_refinement.sh`. To try another source, change
+`--source latent` to `--source x0_hat` or `--source blend` and choose a new run ID.
+The exploration script now separates mask effects with noise-only arms, sweeps noise
+strength and floor, checks the cap, structure, auxiliary seeds, generation seeds, and
+momentum source. The refinement script compares K=1 and K=2, includes matched 75 and
+100 prediction DDIM controls, varies the P&P seed, and checks momentum source. These are
+staged one-factor comparisons rather than the full Cartesian product of all settings.
+For P&P, `refinement__steps_per_timestep` is the number of extra predictions per active
+step; with the default window `[0,25)` and 50 outer steps, K=1 spends 75 predictions. All
+P&P arms, including `K=0` controls, use deterministic CogVideoX DDIM; compare them
+with each other rather than with old DPM results as a matched sampler comparison.
+As in the Wan I2V reference, each inner prediction re-noises the entire preceding
+DDIM-returned clean estimate at the same timestep. CogVideoX's image condition is supplied in
+separate model-input channels, so P&P does not freeze the first sampled latent frame.
+The running-momentum correction still leaves that frame unchanged. `x0_hat` for
+momentum and diagnostics remains the backend's FP32 reconstruction from the final
+model prediction, which can differ slightly from DDIM's BF16 clean estimate.
+
+The stochastic exploration method uses the ordinary sampler. Its motion mask comes
+from the current clean prediction, while the other map comes from momentum's
+outer-step residual history. These maps are heuristics, not calibrated physical
+uncertainty. P&P's separate within-step motion disagreement gates only the applied
+momentum correction, leaving moment updates unchanged. Both extensions keep their
+own random generators. They cannot be enabled together in this initial experiment.
+
+Each run records `extension_run.json` for reuse checks, per-sample metadata under
+`sampling/`, and optional `diagnostics/.../extensions.mp4` with maps and intervention
+magnitudes. The evaluator-facing `videos/` directories contain only the expected
+video files. For paired physics, motion, saturation, clipping, compute, and auxiliary
+seed diversity comparisons, pass completed run directories to:
+
+```bash
+python scripts/report_sampling_extensions.py RUN_DIR_A RUN_DIR_B --out sampling_comparison.csv
+```
+
+The report restricts every score to the shared sample IDs. Auxiliary-seed diversity
+is pairwise mean absolute RGB difference; it measures variation, not plausibility.
 
 `limit` is a **balanced** draw across scenarios, not the first N — the first 60 LikePhys
 pairs are all `ball_collision`, so a pilot using them would measure one kind of physics.
